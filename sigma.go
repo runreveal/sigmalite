@@ -9,22 +9,44 @@ package sigma
 
 // Rule represents a parsed Sigma rule file.
 type Rule struct {
-	Title       string
-	ID          string
-	Related     []Relation
-	Status      Status
+	// Title is a short description of what the rule detects.
+	Title string
+	// ID is an optional globally unique identifier for the rule.
+	ID string
+	// Related is a set of references to other rules.
+	Related []Relation
+	// Status is an optional indicator of the stability of the rule.
+	Status Status
+	// Description is a long-form description of what the rule detects.
 	Description string
-	References  []string
-	Author      string
-	Date        Date
-	Modified    Date
-	Tags        []string
-	Level       Level
+	// References is a set of references that the rule was derived from.
+	// By convention, this is a set of URLs.
+	References []string
+	// Author is the creator of the rule.
+	Author string
+	// Date is the creation date of the rule.
+	Date Date
+	// Modified is the last modification date of the rule.
+	// By convention, Modified is updated whenever
+	// the Detection, Level, LogSource, or Title is changed,
+	// or whenever Status changes to [Deprecated].
+	Modified Date
+	// Tags is a set of categories applied to the rule.
+	// See https://github.com/SigmaHQ/sigma-specification/blob/main/Tags_specification.md
+	// for more details.
+	Tags []string
+	// Level indicates the criticality of the rule.
+	Level Level
 
+	// LogSource describes the log data on which the detection is meant to be applied to.
 	LogSource *LogSource
+	// Detection describes the pattern that a rule is matching on.
 	Detection *Detection
 
-	Fields         []string
+	// Fields is a list of log fields that could be interesting in further analysis of the event
+	// and should be displayed to the analyst.
+	Fields []string
+	// FalsePositives is a list of known false positives that may occur.
 	FalsePositives []string
 }
 
@@ -36,7 +58,7 @@ type LogSource struct {
 	Definition string
 }
 
-// Detection describes the pattern that a [Rule] is searching for.
+// Detection describes the pattern that a [Rule] is matching on.
 type Detection struct {
 	Condition   string
 	Identifiers map[string]*SearchIdentifier
