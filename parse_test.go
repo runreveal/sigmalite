@@ -18,7 +18,7 @@ func TestParseRule(t *testing.T) {
 		want     *Rule
 	}{
 		{
-			filename: "whoami.yaml",
+			filename: "whoami.yml",
 			want: &Rule{
 				Title:       "Whoami Execution",
 				Description: "Detects a whoami.exe execution",
