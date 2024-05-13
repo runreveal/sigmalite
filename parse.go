@@ -10,11 +10,26 @@ import (
 )
 
 type yamlRule struct {
-	Title       string               `yaml:"title"`
-	ID          string               `yaml:"id,omitempty"`
-	Description string               `yaml:"description,omitempty"`
-	LogSource   *LogSource           `yaml:"logsource"`
-	Detection   map[string]yaml.Node `yaml:"detection"`
+	Title          string               `yaml:"title"`
+	ID             string               `yaml:"id,omitempty"`
+	Related        []yamlRelation       `yaml:"related,omitempty"`
+	Status         Status               `yaml:"status,omitempty"`
+	Description    string               `yaml:"description,omitempty"`
+	References     []string             `yaml:"references,omitempty"`
+	Author         string               `yaml:"author,omitempty"`
+	Date           Date                 `yaml:"date,omitempty"`
+	Modified       Date                 `yaml:"modified,omitempty"`
+	Tags           []string             `yaml:"tags,omitempty"`
+	Level          Level                `yaml:"level,omitempty"`
+	LogSource      *LogSource           `yaml:"logsource"`
+	Detection      map[string]yaml.Node `yaml:"detection"`
+	Fields         []string             `yaml:"fields,omitempty"`
+	FalsePositives yaml.Node            `yaml:"falsepositives,omitempty"`
+}
+
+type yamlRelation struct {
+	ID   string       `yaml:"id"`
+	Type RelationType `yaml:"type"`
 }
 
 type yamlLogSource struct {
@@ -24,6 +39,7 @@ type yamlLogSource struct {
 	Definition string `yaml:"definition,omitempty"`
 }
 
+// ParseRule parses a single Sigma detection format YAML document.
 func ParseRule(data []byte) (*Rule, error) {
 	doc := new(yamlRule)
 	if err := yaml.Unmarshal(data, doc); err != nil {
@@ -34,10 +50,20 @@ func ParseRule(data []byte) (*Rule, error) {
 	}
 	r := &Rule{
 		Title:       doc.Title,
-		Description: doc.Description,
 		ID:          doc.ID,
-		LogSource:   new(LogSource),
-		Detection:   new(Detection),
+		Status:      doc.Status,
+		Description: doc.Description,
+		References:  doc.References,
+		Author:      doc.Author,
+		Date:        doc.Date,
+		Modified:    doc.Modified,
+		Tags:        doc.Tags,
+		Level:       doc.Level,
+
+		LogSource: new(LogSource),
+		Detection: new(Detection),
+
+		Fields: doc.Fields,
 	}
 
 	// Technically the Sigma specification makes this required,
@@ -70,6 +96,35 @@ func ParseRule(data []byte) (*Rule, error) {
 		r.Detection.Identifiers[id] = new(SearchIdentifier)
 		// TODO(soon)
 		_ = x
+	}
+
+	if len(doc.Related) > 0 {
+		r.Related = make([]Relation, 0, len(doc.Related))
+		for i, rel := range doc.Related {
+			if rel.ID == "" {
+				return nil, fmt.Errorf("parse sigma rule %q: related[%d]: missing id", r.Title, i)
+			}
+			if rel.Type == "" {
+				return nil, fmt.Errorf("parse sigma rule %q: related[%d]: missing type", r.Title, i)
+			}
+			r.Related = append(r.Related, Relation(rel))
+		}
+	}
+
+	switch doc.FalsePositives.Kind {
+	case 0:
+	case yaml.ScalarNode:
+		var s string
+		if err := doc.FalsePositives.Decode(&s); err != nil {
+			return nil, fmt.Errorf("parse sigma rule %q: false positives: %v", r.Title, err)
+		}
+		r.FalsePositives = []string{s}
+	case yaml.SequenceNode:
+		if err := doc.FalsePositives.Decode(&r.FalsePositives); err != nil {
+			return nil, fmt.Errorf("parse sigma rule %q: false positives: %v", r.Title, err)
+		}
+	default:
+		return nil, fmt.Errorf("parse sigma rule %q: false positives: unsupported value", r.Title)
 	}
 
 	return r, nil

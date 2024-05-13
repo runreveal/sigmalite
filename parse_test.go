@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 )
@@ -21,6 +22,11 @@ func TestParseRule(t *testing.T) {
 			want: &Rule{
 				Title:       "Whoami Execution",
 				Description: "Detects a whoami.exe execution",
+				References: []string{
+					"https://speakerdeck.com/heirhabarov/hunting-for-privilege-escalation-in-windows-environment",
+				},
+				Author: "Florian Roth",
+				Date:   NewDate(2019, time.October, 23),
 				LogSource: &LogSource{
 					Category: "process_creation",
 					Product:  "windows",
@@ -33,6 +39,7 @@ func TestParseRule(t *testing.T) {
 						},
 					},
 				},
+				Level: High,
 			},
 		},
 	}
