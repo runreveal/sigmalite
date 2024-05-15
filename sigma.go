@@ -63,21 +63,26 @@ type Detection struct {
 	Expr Expr
 }
 
-type SearchIdentifier struct {
-	// TODO(soon)
+// An Expr is a sub-expression inside of a [Detection].
+type Expr interface {
+	// TODO(soon): Evaluation methods.
 }
 
-type Expr interface{}
-
+// NamedExpr is an [Expr] that has a name.
+// These are referred to as "search identifiers" in the specification.
 type NamedExpr struct {
 	Name string
 	X    Expr
 }
 
+// AndExpr is an [Expr] is an expression
+// that evaluates to true if and only if all of its sub-expressions evaluate to true.
 type AndExpr struct {
 	X []Expr
 }
 
+// OrExpr is an [Expr] is an expression
+// that evaluates to true if at least one of its sub-expressions evaluate to true.
 type OrExpr struct {
 	X []Expr
 }
@@ -85,10 +90,17 @@ type OrExpr struct {
 // SearchIdentifier is a boolean condition that can be used as a term
 // in the condition of a [Detection].
 
+// A SearchAtom is an [Expr] that matches against a single field.
 type SearchAtom struct {
-	Field     string
+	// Field is the name of the field to match against.
+	// If empty, then this matches against the message.
+	Field string
+	// Modifiers is a sequence of zero or more modifiers to apply against the field
+	// before checking Patterns.
 	Modifiers []string
-	Patterns  []string
+	// Patterns is the set of patterns to check against the field.
+	// If one of them matches, then the field matches this atom.
+	Patterns []string
 }
 
 // Status is an enumeration of [Rule] stability classifications.
