@@ -127,6 +127,9 @@ func parseDetection(block map[string]yaml.Node) (*Detection, error) {
 	if err := docCondition.Decode(&condition); err != nil {
 		return nil, fmt.Errorf("condition: %v", err)
 	}
+	if _, hasTimeframe := block["timeframe"]; hasTimeframe {
+		return nil, fmt.Errorf("aggregate detections not supported")
+	}
 
 	idents := make(map[string]*NamedExpr)
 	for id, x := range block {
