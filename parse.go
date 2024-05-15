@@ -79,23 +79,10 @@ func ParseRule(data []byte) (*Rule, error) {
 	if doc.Detection == nil {
 		return nil, fmt.Errorf("parse sigma rule %q: missing detection", r.Title)
 	}
-	docCondition, ok := doc.Detection["condition"]
-	if !ok {
-		return nil, fmt.Errorf("parse sigma rule %q: missing detection condition", r.Title)
-	}
-	if err := docCondition.Decode(&r.Detection.Condition); err != nil {
-		return nil, fmt.Errorf("parse sigma rule %q: condition: %v", r.Title, err)
-	}
-	for id, x := range doc.Detection {
-		if id == "condition" {
-			continue
-		}
-		if r.Detection.Identifiers == nil {
-			r.Detection.Identifiers = make(map[string]*SearchIdentifier)
-		}
-		r.Detection.Identifiers[id] = new(SearchIdentifier)
-		// TODO(soon)
-		_ = x
+	var err error
+	r.Detection, err = parseDetection(doc.Detection)
+	if err != nil {
+		return nil, fmt.Errorf("parse sigma rule %q: %v", r.Title, err)
 	}
 
 	if len(doc.Related) > 0 {
@@ -128,4 +115,126 @@ func ParseRule(data []byte) (*Rule, error) {
 	}
 
 	return r, nil
+}
+
+func parseDetection(block map[string]yaml.Node) (*Detection, error) {
+	docCondition, ok := block["condition"]
+	if !ok {
+		return nil, fmt.Errorf("missing detection condition")
+	}
+	var condition string
+	if err := docCondition.Decode(&condition); err != nil {
+		return nil, fmt.Errorf("condition: %v", err)
+	}
+
+	idents := make(map[string]*NamedExpr)
+	for id, x := range block {
+		if id == "condition" {
+			continue
+		}
+
+		var result Expr
+		switch x.Kind {
+		case yaml.SequenceNode:
+			container := new(OrExpr)
+			for _, elem := range x.Content {
+				switch elem.Kind {
+				case yaml.ScalarNode:
+					var s string
+					if err := elem.Decode(&s); err != nil {
+						return nil, fmt.Errorf("search identifier %q: %v", id, err)
+					}
+					container.X = append(container.X, &SearchAtom{
+						Patterns: []string{s},
+					})
+				case yaml.MappingNode:
+					y, err := parseSearchMap(elem)
+					if err != nil {
+						return nil, fmt.Errorf("search identifier %q: %v", id, err)
+					}
+					container.X = append(container.X, y)
+				default:
+					return nil, fmt.Errorf("search identifier %q: unsupported list value", id)
+				}
+			}
+			switch len(container.X) {
+			case 0:
+				return nil, fmt.Errorf("search identifier %q: empty list", id)
+			case 1:
+				result = container.X[0]
+			default:
+				// TODO(soon): Convert an all-atoms container into a single atom.
+				result = container
+			}
+		case yaml.MappingNode:
+			y, err := parseSearchMap(&x)
+			if err != nil {
+				return nil, fmt.Errorf("search identifier %q: %v", id, err)
+			}
+			result = y
+		default:
+			return nil, fmt.Errorf("search identifier %q: unsupported value", id)
+		}
+
+		idents[id] = &NamedExpr{
+			Name: id,
+			X:    result,
+		}
+	}
+
+	// TODO(soon): Support more complex expressions.
+	named := idents[condition]
+	if named == nil {
+		return nil, fmt.Errorf("condition: undefined search identifier %q", condition)
+	}
+	return &Detection{
+		Expr: named,
+	}, nil
+}
+
+func parseSearchMap(node *yaml.Node) (Expr, error) {
+	if node.Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("not a map")
+	}
+	container := new(AndExpr)
+	for i := 0; i < len(node.Content); i += 2 {
+		keyNode := node.Content[i]
+		valueNode := node.Content[i+1]
+
+		var k string
+		if err := keyNode.Decode(&k); err != nil {
+			return nil, err
+		}
+		atom := &SearchAtom{
+			Field: k,
+			// TODO(soon): Modifiers
+		}
+
+		// TODO(maybe): Handle integers differently?
+		switch valueNode.Kind {
+		case yaml.ScalarNode:
+			var v string
+			if err := valueNode.Decode(&v); err != nil {
+				return nil, fmt.Errorf("%s: %v", k, err)
+			}
+			atom.Patterns = []string{v}
+		case yaml.SequenceNode:
+			if err := valueNode.Decode(&atom.Patterns); err != nil {
+				return nil, fmt.Errorf("%s: %v", k, err)
+			}
+		default:
+			return nil, fmt.Errorf("%s: unsupported value", k)
+		}
+
+		container.X = append(container.X, atom)
+	}
+
+	switch len(container.X) {
+	case 0:
+		return nil, fmt.Errorf("empty map")
+	case 1:
+		return container.X[0], nil
+	default:
+		return container, nil
+	}
 }

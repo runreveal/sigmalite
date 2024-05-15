@@ -32,10 +32,11 @@ func TestParseRule(t *testing.T) {
 					Product:  "windows",
 				},
 				Detection: &Detection{
-					Condition: "selection",
-					Identifiers: map[string]*SearchIdentifier{
-						"selection": {
-							// TODO(soon)
+					Expr: &NamedExpr{
+						Name: "selection",
+						X: &SearchAtom{
+							Field:    "Image",
+							Patterns: []string{`C:\Windows\System32\whoami.exe`},
 						},
 					},
 				},
@@ -64,9 +65,24 @@ func TestParseRule(t *testing.T) {
 					Service: "cloudtrail",
 				},
 				Detection: &Detection{
-					Condition: "selection_source",
-					Identifiers: map[string]*SearchIdentifier{
-						"selection_source": {},
+					Expr: &NamedExpr{
+						Name: "selection_source",
+						X: &AndExpr{
+							X: []Expr{
+								&SearchAtom{
+									Field:    "eventSource",
+									Patterns: []string{"cloudtrail.amazonaws.com"},
+								},
+								&SearchAtom{
+									Field: "eventName",
+									Patterns: []string{
+										"StopLogging",
+										"UpdateTrail",
+										"DeleteTrail",
+									},
+								},
+							},
+						},
 					},
 				},
 				FalsePositives: []string{

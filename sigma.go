@@ -60,14 +60,35 @@ type LogSource struct {
 
 // Detection describes the pattern that a [Rule] is matching on.
 type Detection struct {
-	Condition   string
-	Identifiers map[string]*SearchIdentifier
+	Expr Expr
+}
+
+type SearchIdentifier struct {
+	// TODO(soon)
+}
+
+type Expr interface{}
+
+type NamedExpr struct {
+	Name string
+	X    Expr
+}
+
+type AndExpr struct {
+	X []Expr
+}
+
+type OrExpr struct {
+	X []Expr
 }
 
 // SearchIdentifier is a boolean condition that can be used as a term
 // in the condition of a [Detection].
-type SearchIdentifier struct {
-	// TODO(soon)
+
+type SearchAtom struct {
+	Field     string
+	Modifiers []string
+	Patterns  []string
 }
 
 // Status is an enumeration of [Rule] stability classifications.
