@@ -5,6 +5,7 @@ package sigma
 
 import (
 	"fmt"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -137,6 +138,7 @@ func parseDetection(block map[string]yaml.Node) (*Detection, error) {
 		switch x.Kind {
 		case yaml.SequenceNode:
 			container := new(OrExpr)
+			allScalars := true
 			for _, elem := range x.Content {
 				switch elem.Kind {
 				case yaml.ScalarNode:
@@ -148,6 +150,7 @@ func parseDetection(block map[string]yaml.Node) (*Detection, error) {
 						Patterns: []string{s},
 					})
 				case yaml.MappingNode:
+					allScalars = false
 					y, err := parseSearchMap(elem)
 					if err != nil {
 						return nil, fmt.Errorf("search identifier %q: %v", id, err)
@@ -163,8 +166,16 @@ func parseDetection(block map[string]yaml.Node) (*Detection, error) {
 			case 1:
 				result = container.X[0]
 			default:
-				// TODO(soon): Convert an all-atoms container into a single atom.
-				result = container
+				if allScalars {
+					// Optimization: Given a list of strings, turn into a single atom.
+					patterns := make([]string, 0, len(container.X))
+					for _, elem := range container.X {
+						patterns = append(patterns, elem.(*SearchAtom).Patterns...)
+					}
+					result = &SearchAtom{Patterns: patterns}
+				} else {
+					result = container
+				}
 			}
 		case yaml.MappingNode:
 			y, err := parseSearchMap(&x)
@@ -205,9 +216,15 @@ func parseSearchMap(node *yaml.Node) (Expr, error) {
 		if err := keyNode.Decode(&k); err != nil {
 			return nil, err
 		}
-		atom := &SearchAtom{
-			Field: k,
-			// TODO(soon): Modifiers
+		atom := new(SearchAtom)
+		var modifiers string
+		var ok bool
+		atom.Field, modifiers, ok = strings.Cut(k, "|")
+		if ok {
+			if modifiers == "" {
+				return nil, fmt.Errorf("%s: empty modifiers", k)
+			}
+			atom.Modifiers = strings.Split(modifiers, "|")
 		}
 
 		// TODO(maybe): Handle integers differently?

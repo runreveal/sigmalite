@@ -1,0 +1,9 @@
+title: Mixed Detection List Example
+description: A contrived example for mixing lists of string matches with field matches
+logsource:
+    product: windows
+detection:
+    selection:
+        - EVILSERVICE
+        - Image|endswith: \\example.exe
+    condition: selection
