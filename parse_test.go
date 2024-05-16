@@ -458,6 +458,38 @@ func TestParseRule(t *testing.T) {
 				Level: Medium,
 			},
 		},
+		{
+			filename: "condition_list.yml",
+			want: &Rule{
+				Title:       "Condition List Example",
+				Description: "A contrived example for using a list of conditions.",
+				LogSource: &LogSource{
+					Product: "windows",
+				},
+				Detection: &Detection{
+					Expr: &OrExpr{
+						X: []Expr{
+							&NamedExpr{
+								Name: "selection1",
+								X: &SearchAtom{
+									Field:     "Image",
+									Modifiers: []string{"endswith"},
+									Patterns:  []string{`\\example.exe`},
+								},
+							},
+							&NamedExpr{
+								Name: "selection2",
+								X: &SearchAtom{
+									Field:     "Image",
+									Modifiers: []string{"endswith"},
+									Patterns:  []string{`\\evil.exe`},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
 	}
 
 	for _, test := range tests {

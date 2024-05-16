@@ -104,36 +104,26 @@ func ParseRule(data []byte) (*Rule, error) {
 		}
 	}
 
-	switch doc.FalsePositives.Kind {
-	case 0:
-	case yaml.ScalarNode:
-		var s string
-		if err := doc.FalsePositives.Decode(&s); err != nil {
-			return nil, fmt.Errorf("parse sigma rule %q: false positives: %v", r.Title, err)
-		}
-		r.FalsePositives = []string{s}
-	case yaml.SequenceNode:
-		if err := doc.FalsePositives.Decode(&r.FalsePositives); err != nil {
-			return nil, fmt.Errorf("parse sigma rule %q: false positives: %v", r.Title, err)
-		}
-	default:
-		return nil, fmt.Errorf("parse sigma rule %q: false positives: unsupported value", r.Title)
+	r.FalsePositives, err = listOfStrings(&doc.FalsePositives)
+	if err != nil {
+		return nil, fmt.Errorf("parse sigma rule %q: false positives: %v", r.Title, err)
 	}
 
 	return r, nil
 }
 
 func parseDetection(block map[string]yaml.Node) (*Detection, error) {
-	docCondition, ok := block["condition"]
-	if !ok {
-		return nil, fmt.Errorf("missing detection condition")
-	}
-	var condition string
-	if err := docCondition.Decode(&condition); err != nil {
+	// Check some basics first before we drill into search identifiers.
+	docCondition := block["condition"]
+	conditions, err := listOfStrings(&docCondition)
+	if err != nil {
 		return nil, fmt.Errorf("condition: %v", err)
 	}
+	if len(conditions) == 0 {
+		return nil, fmt.Errorf("missing detection condition")
+	}
 	if _, hasTimeframe := block["timeframe"]; hasTimeframe {
-		return nil, errAggregate
+		return nil, fmt.Errorf("timeframe: %v", errAggregate)
 	}
 
 	var idents sortedSearchIdentifiers
@@ -201,13 +191,21 @@ func parseDetection(block map[string]yaml.Node) (*Detection, error) {
 		})
 	}
 
-	x, err := parseCondition(condition, idents)
-	if err != nil {
-		return nil, err
+	container := new(OrExpr)
+	for _, cond := range conditions {
+		x, err := parseCondition(cond, idents)
+		if err != nil {
+			return nil, err
+		}
+		container.X = append(container.X, x)
 	}
-	return &Detection{
-		Expr: x,
-	}, nil
+	d := new(Detection)
+	if len(container.X) == 1 {
+		d.Expr = container.X[0]
+	} else {
+		d.Expr = container
+	}
+	return d, nil
 }
 
 type conditionParser struct {
@@ -473,6 +471,28 @@ func parseSearchMap(node *yaml.Node) (Expr, error) {
 		return container.X[0], nil
 	default:
 		return container, nil
+	}
+}
+
+func listOfStrings(node *yaml.Node) ([]string, error) {
+	switch node.Kind {
+	case 0:
+		// Treat missing identically to an empty list.
+		return nil, nil
+	case yaml.ScalarNode:
+		var s string
+		if err := node.Decode(&s); err != nil {
+			return nil, err
+		}
+		return []string{s}, nil
+	case yaml.SequenceNode:
+		var list []string
+		if err := node.Decode(&list); err != nil {
+			return nil, err
+		}
+		return list, nil
+	default:
+		return nil, errors.New("expected scalar or list of scalars")
 	}
 }
 
