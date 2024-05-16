@@ -4,8 +4,13 @@
 package sigma
 
 import (
+	"cmp"
+	"errors"
 	"fmt"
+	"regexp"
+	"slices"
 	"strings"
+	"unicode"
 
 	"gopkg.in/yaml.v3"
 )
@@ -131,7 +136,7 @@ func parseDetection(block map[string]yaml.Node) (*Detection, error) {
 		return nil, fmt.Errorf("aggregate detections not supported")
 	}
 
-	idents := make(map[string]*NamedExpr)
+	var idents sortedSearchIdentifiers
 	for id, x := range block {
 		if id == "condition" {
 			continue
@@ -190,20 +195,156 @@ func parseDetection(block map[string]yaml.Node) (*Detection, error) {
 			return nil, fmt.Errorf("search identifier %q: unsupported value", id)
 		}
 
-		idents[id] = &NamedExpr{
+		idents.insert(&NamedExpr{
 			Name: id,
 			X:    result,
-		}
+		})
 	}
 
-	// TODO(soon): Support more complex expressions.
-	named := idents[condition]
-	if named == nil {
-		return nil, fmt.Errorf("condition: undefined search identifier %q", condition)
+	x, err := parseCondition(condition, idents)
+	if err != nil {
+		return nil, err
 	}
 	return &Detection{
-		Expr: named,
+		Expr: x,
 	}, nil
+}
+
+type conditionParser struct {
+	s           string
+	identifiers sortedSearchIdentifiers
+}
+
+func parseCondition(condition string, identifiers sortedSearchIdentifiers) (Expr, error) {
+	p := conditionParser{
+		s:           condition,
+		identifiers: identifiers,
+	}
+	x, err := p.expr()
+	if errors.Is(err, errEOF) {
+		return nil, fmt.Errorf("condition: empty")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("condition: %v", err)
+	}
+	if tok := p.lex(); tok != "" {
+		return nil, fmt.Errorf("condition: unexpected %q", tok)
+	}
+	return x, nil
+}
+
+func (p *conditionParser) expr() (Expr, error) {
+	// TODO(soon): Support more complex expressions.
+	return p.unary()
+}
+
+func (p *conditionParser) unary() (Expr, error) {
+	tok := p.lex()
+	if tok == "" {
+		return nil, errEOF
+	}
+	switch tok {
+	case "(":
+		x, err := p.expr()
+		if errors.Is(err, errEOF) {
+			return nil, errors.New("unexpected end of condition after '('")
+		}
+		if err != nil {
+			return nil, err
+		}
+		tok = p.lex()
+		if tok == "" {
+			return nil, errors.New("missing ')'")
+		}
+		return x, nil
+	case "not":
+		x, err := p.unary()
+		if errors.Is(err, errEOF) {
+			return nil, errors.New("unexpected end of condition after 'not'")
+		}
+		if err != nil {
+			return nil, err
+		}
+		return &NotExpr{X: x}, nil
+	case "1", "all":
+		next := p.lex()
+		if next == "" {
+			return nil, fmt.Errorf("expected \"of\" after %q (condition ended)", tok)
+		}
+		if next != "of" {
+			return nil, fmt.Errorf("expected \"of\" after %q (found %q)", tok, next)
+		}
+		next = p.lex()
+		if next == "" {
+			return nil, fmt.Errorf("expected word after %q (condition ended)", tok+" of")
+		}
+		identifiers := p.identifiers
+		if next != "them" {
+			identifiers = identifiers.filter(next)
+		}
+		switch len(identifiers) {
+		case 0:
+			return nil, fmt.Errorf("%s of %s did not match any identifiers", tok, next)
+		case 1:
+			return identifiers[0], nil
+		default:
+			exprs := make([]Expr, len(identifiers))
+			for i, x := range identifiers {
+				exprs[i] = x
+			}
+
+			switch tok {
+			case "1":
+				return &OrExpr{X: exprs}, nil
+			case "all":
+				return &AndExpr{X: exprs}, nil
+			default:
+				panic("unreachable")
+			}
+		}
+	default:
+		x := p.identifiers.find(tok)
+		if x == nil {
+			return nil, fmt.Errorf("unknown search identifier %s", tok)
+		}
+		return x, nil
+	}
+}
+
+func operatorPrecedence(tok string) int {
+	switch tok {
+	case "and":
+		return 1
+	case "or":
+		return 0
+	default:
+		return -1
+	}
+}
+
+var errEOF = errors.New("end of condition")
+
+// lex returns the next token in the condition
+// or the empty string on EOF.
+func (p *conditionParser) lex() string {
+	p.s = strings.TrimLeftFunc(p.s, unicode.IsSpace)
+	var end int
+	switch {
+	case p.s == "":
+		return ""
+	case strings.HasPrefix(p.s, "(") || strings.HasPrefix(p.s, ")"):
+		end = 1
+	default:
+		end = strings.IndexFunc(p.s, func(c rune) bool {
+			return c == '(' || c == ')' || unicode.IsSpace(c)
+		})
+		if end == -1 {
+			end = len(p.s)
+		}
+	}
+	tok := p.s[:end]
+	p.s = p.s[end:]
+	return tok
 }
 
 func parseSearchMap(node *yaml.Node) (Expr, error) {
@@ -257,4 +398,65 @@ func parseSearchMap(node *yaml.Node) (Expr, error) {
 	default:
 		return container, nil
 	}
+}
+
+// sortedSearchIdentifiers is a sorted slice of named expressions.
+type sortedSearchIdentifiers []*NamedExpr
+
+func (ssi sortedSearchIdentifiers) find(name string) *NamedExpr {
+	i, ok := slices.BinarySearchFunc(ssi, name, compareNamedExpr)
+	if !ok {
+		return nil
+	}
+	return ssi[i]
+}
+
+func (ssi *sortedSearchIdentifiers) insert(x *NamedExpr) {
+	i, ok := slices.BinarySearchFunc(*ssi, x.Name, compareNamedExpr)
+	if ok {
+		panic(x.Name + " already present")
+	}
+	*ssi = slices.Insert(*ssi, i, x)
+}
+
+// filter returns a new slice that contains only the expressions
+// whose name matches the given pattern.
+// The pattern may contain asterisk characters ('*')
+// to indicate matches of zero or more characters.
+func (ssi sortedSearchIdentifiers) filter(pattern string) sortedSearchIdentifiers {
+	if !strings.Contains(pattern, "*") {
+		// No wildcards? This is just a find.
+		x := ssi.find(pattern)
+		if x == nil {
+			return nil
+		}
+		return sortedSearchIdentifiers{x}
+	}
+
+	sb := new(strings.Builder)
+	sb.WriteString("^")
+	for {
+		i := strings.Index(pattern, "*")
+		if i == -1 {
+			sb.WriteString(regexp.QuoteMeta(pattern))
+			break
+		}
+		sb.WriteString(regexp.QuoteMeta(pattern[:i]))
+		sb.WriteString(".*")
+		pattern = pattern[i+len("*"):]
+	}
+	sb.WriteString("$")
+	pat := regexp.MustCompile(sb.String())
+
+	result := make(sortedSearchIdentifiers, 0, len(ssi))
+	for _, x := range ssi {
+		if pat.MatchString(x.Name) {
+			result = append(result, x)
+		}
+	}
+	return result
+}
+
+func compareNamedExpr(y *NamedExpr, name string) int {
+	return cmp.Compare(y.Name, name)
 }

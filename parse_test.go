@@ -231,6 +231,95 @@ func TestParseRule(t *testing.T) {
 				Level: Medium,
 			},
 		},
+		{
+			filename: "lnx_auditd_coinminer.yml",
+			want: &Rule{
+				Title:       "Possible Coin Miner CPU Priority Param",
+				ID:          "071d5e5a-9cef-47ec-bc4e-a42e34d8d0ed",
+				Status:      Test,
+				Description: "Detects command line parameter very often used with coin miners",
+				References: []string{
+					"https://xmrig.com/docs/miner/command-line-options",
+				},
+				Author:   "Florian Roth (Nextron Systems)",
+				Date:     NewDate(2021, time.October, 9),
+				Modified: NewDate(2022, time.December, 25),
+				Tags: []string{
+					"attack.privilege_escalation",
+					"attack.t1068",
+				},
+				LogSource: &LogSource{
+					Product: "linux",
+					Service: "auditd",
+				},
+				Detection: &Detection{
+					Expr: &OrExpr{
+						X: []Expr{
+							&NamedExpr{
+								Name: "cmd1",
+								X: &SearchAtom{
+									Field:     "a1",
+									Modifiers: []string{"startswith"},
+									Patterns:  []string{"--cpu-priority"},
+								},
+							},
+							&NamedExpr{
+								Name: "cmd2",
+								X: &SearchAtom{
+									Field:     "a2",
+									Modifiers: []string{"startswith"},
+									Patterns:  []string{"--cpu-priority"},
+								},
+							},
+							&NamedExpr{
+								Name: "cmd3",
+								X: &SearchAtom{
+									Field:     "a3",
+									Modifiers: []string{"startswith"},
+									Patterns:  []string{"--cpu-priority"},
+								},
+							},
+							&NamedExpr{
+								Name: "cmd4",
+								X: &SearchAtom{
+									Field:     "a4",
+									Modifiers: []string{"startswith"},
+									Patterns:  []string{"--cpu-priority"},
+								},
+							},
+							&NamedExpr{
+								Name: "cmd5",
+								X: &SearchAtom{
+									Field:     "a5",
+									Modifiers: []string{"startswith"},
+									Patterns:  []string{"--cpu-priority"},
+								},
+							},
+							&NamedExpr{
+								Name: "cmd6",
+								X: &SearchAtom{
+									Field:     "a6",
+									Modifiers: []string{"startswith"},
+									Patterns:  []string{"--cpu-priority"},
+								},
+							},
+							&NamedExpr{
+								Name: "cmd7",
+								X: &SearchAtom{
+									Field:     "a7",
+									Modifiers: []string{"startswith"},
+									Patterns:  []string{"--cpu-priority"},
+								},
+							},
+						},
+					},
+				},
+				FalsePositives: []string{
+					"Other tools that use a --cpu-priority flag",
+				},
+				Level: Critical,
+			},
+		},
 	}
 
 	for _, test := range tests {

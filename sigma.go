@@ -75,6 +75,11 @@ type NamedExpr struct {
 	X    Expr
 }
 
+// NotExpr is a negated [Expr].
+type NotExpr struct {
+	X Expr
+}
+
 // AndExpr is an [Expr] is an expression
 // that evaluates to true if and only if all of its sub-expressions evaluate to true.
 type AndExpr struct {
