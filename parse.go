@@ -133,7 +133,7 @@ func parseDetection(block map[string]yaml.Node) (*Detection, error) {
 		return nil, fmt.Errorf("condition: %v", err)
 	}
 	if _, hasTimeframe := block["timeframe"]; hasTimeframe {
-		return nil, fmt.Errorf("aggregate detections not supported")
+		return nil, errAggregate
 	}
 
 	var idents sortedSearchIdentifiers
@@ -234,8 +234,11 @@ func parseCondition(condition string, identifiers sortedSearchIdentifiers) (Expr
 }
 
 func (p *conditionParser) expr() (Expr, error) {
-	// TODO(soon): Support more complex expressions.
-	return p.unary()
+	x, err := p.unary()
+	if err != nil {
+		return nil, err
+	}
+	return p.binaryTrail(x, 0)
 }
 
 func (p *conditionParser) unary() (Expr, error) {
@@ -311,6 +314,75 @@ func (p *conditionParser) unary() (Expr, error) {
 	}
 }
 
+// binaryTrail parses zero or more (binaryOp, unaryExpr) sequences.
+func (p *conditionParser) binaryTrail(x Expr, minPrecedence int) (Expr, error) {
+	for {
+		start := p.s
+		op := p.lex()
+		if op == "" {
+			return x, nil
+		}
+		if op == "|" {
+			return nil, errAggregate
+		}
+		precedence1 := operatorPrecedence(op)
+		if precedence1 < 0 || precedence1 < minPrecedence {
+			// Not a binary operator or below precedence threshold.
+			p.s = start
+			return x, nil
+		}
+
+		y, err := p.unary()
+		if errors.Is(err, errEOF) {
+			return nil, fmt.Errorf("unexpected end of condition after %q", op)
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		// Resolve any higher precedence operators first.
+		for {
+			start := p.s
+			op2 := p.lex()
+			if op2 == "" {
+				break
+			}
+			p.s = start
+
+			precedence2 := operatorPrecedence(op2)
+			if precedence2 < 0 || precedence2 <= precedence1 {
+				// Not a binary operator or below the precedence of the original operator.
+				break
+			}
+			y, err = p.binaryTrail(y, precedence1+1)
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		switch op {
+		case "and":
+			if ax, ok := x.(*AndExpr); ok {
+				ax.X = append(ax.X, y)
+			} else {
+				x = &AndExpr{
+					X: []Expr{x, y},
+				}
+			}
+		case "or":
+			if ox, ok := x.(*OrExpr); ok {
+				ox.X = append(ox.X, y)
+			} else {
+				x = &OrExpr{
+					X: []Expr{x, y},
+				}
+			}
+		default:
+			panic("unreachable")
+		}
+	}
+}
+
 func operatorPrecedence(tok string) int {
 	switch tok {
 	case "and":
@@ -322,21 +394,25 @@ func operatorPrecedence(tok string) int {
 	}
 }
 
-var errEOF = errors.New("end of condition")
+var (
+	errEOF       = errors.New("end of condition")
+	errAggregate = errors.New("aggregation expressions not supported")
+)
 
 // lex returns the next token in the condition
 // or the empty string on EOF.
 func (p *conditionParser) lex() string {
 	p.s = strings.TrimLeftFunc(p.s, unicode.IsSpace)
 	var end int
+	const delims = "()|"
 	switch {
 	case p.s == "":
 		return ""
-	case strings.HasPrefix(p.s, "(") || strings.HasPrefix(p.s, ")"):
+	case strings.IndexByte("()|", p.s[0]) != -1:
 		end = 1
 	default:
 		end = strings.IndexFunc(p.s, func(c rune) bool {
-			return c == '(' || c == ')' || unicode.IsSpace(c)
+			return strings.ContainsRune(delims, c) || unicode.IsSpace(c)
 		})
 		if end == -1 {
 			end = len(p.s)

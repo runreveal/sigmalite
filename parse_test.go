@@ -320,6 +320,144 @@ func TestParseRule(t *testing.T) {
 				Level: Critical,
 			},
 		},
+		{
+			filename: "file_access_win_browser_credential_access.yml",
+			want: &Rule{
+				Title:  "Access To Browser Credential Files By Uncommon Application",
+				ID:     "91cb43db-302a-47e3-b3c8-7ede481e27bf",
+				Status: Experimental,
+				Description: "Detects file access requests to browser credential stores by uncommon processes.\n" +
+					"Could indicate potential attempt of credential stealing.\n" +
+					"Requires heavy baselining before usage\n",
+				References: []string{
+					"https://www.zscaler.com/blogs/security-research/ffdroider-stealer-targeting-social-media-platform-users",
+					"https://github.com/lclevy/firepwd",
+				},
+				Author:   "frack113",
+				Date:     NewDate(2022, time.April, 9),
+				Modified: NewDate(2023, time.December, 18),
+				Tags: []string{
+					"attack.t1003",
+					"attack.credential_access",
+				},
+				LogSource: &LogSource{
+					Category:   "file_access",
+					Product:    "windows",
+					Definition: "Requirements: Microsoft-Windows-Kernel-File ETW provider",
+				},
+				Detection: &Detection{
+					Expr: &AndExpr{
+						X: []Expr{
+							&OrExpr{
+								X: []Expr{
+									&NamedExpr{
+										Name: "selection_chromium",
+										X: &SearchAtom{
+											Field:     "FileName",
+											Modifiers: []string{"contains"},
+											Patterns: []string{
+												`\Appdata\Local\Chrome\User Data\Default\Login Data`,
+												`\AppData\Local\Google\Chrome\User Data\Default\Network\Cookies`,
+												`\AppData\Local\Google\Chrome\User Data\Local State`,
+											},
+										},
+									},
+									&NamedExpr{
+										Name: "selection_firefox",
+										X: &SearchAtom{
+											Field:     "FileName",
+											Modifiers: []string{"endswith"},
+											Patterns: []string{
+												`\cookies.sqlite`,
+												`release\key3.db`,
+												`release\key4.db`,
+												`release\logins.json`,
+											},
+										},
+									},
+									&NamedExpr{
+										Name: "selection_ie",
+										X: &SearchAtom{
+											Field:     "FileName",
+											Modifiers: []string{"endswith"},
+											Patterns:  []string{`\Appdata\Local\Microsoft\Windows\WebCache\WebCacheV01.dat`},
+										},
+									},
+								},
+							},
+							&NotExpr{X: &OrExpr{
+								X: []Expr{
+									&NamedExpr{
+										Name: "filter_main_generic",
+										X: &SearchAtom{
+											Field:     "Image",
+											Modifiers: []string{"contains"},
+											Patterns: []string{
+												`:\Program Files (x86)\`,
+												`:\Program Files\`,
+												`:\Windows\system32\`,
+												`:\Windows\SysWOW64\`,
+											},
+										},
+									},
+									&NamedExpr{
+										Name: "filter_main_system",
+										X: &SearchAtom{
+											Field:    "Image",
+											Patterns: []string{"System"},
+										},
+									},
+								},
+							}},
+							&NotExpr{X: &OrExpr{
+								X: []Expr{
+									&NamedExpr{
+										Name: "filter_optional_defender",
+										X: &AndExpr{
+											X: []Expr{
+												&SearchAtom{
+													Field:     "Image",
+													Modifiers: []string{"contains"},
+													Patterns: []string{
+														`:\ProgramData\Microsoft\Windows Defender\`,
+													},
+												},
+												&SearchAtom{
+													Field:     "Image",
+													Modifiers: []string{"endswith"},
+													Patterns: []string{
+														`\MpCopyAccelerator.exe`,
+														`\MsMpEng.exe`,
+													},
+												},
+											},
+										},
+									},
+									&NamedExpr{
+										Name: "filter_optional_thor",
+										X: &SearchAtom{
+											Field:     "Image",
+											Modifiers: []string{"endswith"},
+											Patterns: []string{
+												`\thor64.exe`,
+												`\thor.exe`,
+											},
+										},
+									},
+								},
+							}},
+						},
+					},
+				},
+				FalsePositives: []string{
+					`Antivirus, Anti-Spyware, Anti-Malware Software`,
+					`Backup software`,
+					`Legitimate software installed on partitions other than "C:\"`,
+					`Searching software such as "everything.exe"`,
+				},
+				Level: Medium,
+			},
+		},
 	}
 
 	for _, test := range tests {
