@@ -7,6 +7,13 @@
 // [Sigma detection format]: https://sigmahq.io/
 package sigma
 
+import (
+	"regexp"
+	"slices"
+	"strings"
+	"sync"
+)
+
 // Rule represents a parsed Sigma rule file.
 type Rule struct {
 	// Title is a short description of what the rule detects.
@@ -58,14 +65,29 @@ type LogSource struct {
 	Definition string
 }
 
+// LogEntry represents an entry that a [Rule] can match on.
+type LogEntry struct {
+	Message string
+	Fields  map[string]string
+}
+
 // Detection describes the pattern that a [Rule] is matching on.
 type Detection struct {
 	Expr Expr
 }
 
+// Matches reports whether the entry matches the detection's expression.
+func (d *Detection) Matches(entry *LogEntry) bool {
+	return d.Expr.ExprMatches(entry)
+}
+
 // An Expr is a sub-expression inside of a [Detection].
+//
+// ExprMatches reports whether an entry matches the expression.
+// Implementations of ExprMatches must be safe to call concurrently
+// from multiple goroutines.
 type Expr interface {
-	// TODO(soon): Evaluation methods.
+	ExprMatches(*LogEntry) bool
 }
 
 // NamedExpr is an [Expr] that has a name.
@@ -75,9 +97,17 @@ type NamedExpr struct {
 	X    Expr
 }
 
+func (n *NamedExpr) ExprMatches(entry *LogEntry) bool {
+	return n.X.ExprMatches(entry)
+}
+
 // NotExpr is a negated [Expr].
 type NotExpr struct {
 	X Expr
+}
+
+func (x *NotExpr) ExprMatches(entry *LogEntry) bool {
+	return !x.X.ExprMatches(entry)
 }
 
 // AndExpr is an [Expr] is an expression
@@ -86,14 +116,29 @@ type AndExpr struct {
 	X []Expr
 }
 
+func (a *AndExpr) ExprMatches(entry *LogEntry) bool {
+	for _, x := range a.X {
+		if !x.ExprMatches(entry) {
+			return false
+		}
+	}
+	return true
+}
+
 // OrExpr is an [Expr] is an expression
 // that evaluates to true if at least one of its sub-expressions evaluate to true.
 type OrExpr struct {
 	X []Expr
 }
 
-// SearchIdentifier is a boolean condition that can be used as a term
-// in the condition of a [Detection].
+func (o *OrExpr) ExprMatches(entry *LogEntry) bool {
+	for _, x := range o.X {
+		if !x.ExprMatches(entry) {
+			return false
+		}
+	}
+	return true
+}
 
 // A SearchAtom is an [Expr] that matches against a single field.
 type SearchAtom struct {
@@ -106,6 +151,70 @@ type SearchAtom struct {
 	// Patterns is the set of patterns to check against the field.
 	// If one of them matches, then the field matches this atom.
 	Patterns []string
+
+	mu                sync.RWMutex
+	compiledIsMessage bool
+	compiledPatterns  []string
+	compiled          *regexp.Regexp
+}
+
+func (atom *SearchAtom) ExprMatches(entry *LogEntry) bool {
+	if len(atom.Patterns) == 0 {
+		// Short-circuit if no patterns.
+		// Avoids a case where atom.compiled is nil.
+		return false
+	}
+
+	field := entry.Message
+	if atom.Field != "" {
+		field = entry.Fields[atom.Field]
+	}
+	// TODO(soon): Modifiers.
+	return atom.compile().MatchString(field)
+}
+
+func (atom *SearchAtom) compile() *regexp.Regexp {
+	isMessage := atom.Field == ""
+
+	// Common case: we already compiled the regexp.
+	atom.mu.RLock()
+	if slices.Equal(atom.compiledPatterns, atom.Patterns) && isMessage == atom.compiledIsMessage {
+		compiled := atom.compiled
+		atom.mu.RUnlock()
+		return compiled
+	}
+	atom.mu.RUnlock()
+
+	// Compile a new regular expression
+	// (outside the critical section to reduce contention).
+	sb := new(strings.Builder)
+	for i, pat := range atom.Patterns {
+		if i > 0 {
+			sb.WriteString("|")
+		}
+		sb.WriteString("(?i:") // Case-insensitive, non-capturing group.
+		if !isMessage {
+			sb.WriteString("^")
+		}
+		// TODO(soon): Wildcards.
+		sb.WriteString(regexp.QuoteMeta(pat))
+		if !isMessage {
+			sb.WriteString("$")
+		}
+		sb.WriteString(")")
+	}
+	compiled := regexp.MustCompile(sb.String())
+	patternsCopy := slices.Clone(atom.Patterns)
+
+	// Update cache.
+	atom.mu.Lock()
+	if !slices.Equal(atom.compiledPatterns, atom.Patterns) || isMessage != atom.compiledIsMessage {
+		atom.compiledPatterns = patternsCopy
+		atom.compiled = compiled
+	}
+	atom.mu.Unlock()
+
+	return compiled
 }
 
 // Status is an enumeration of [Rule] stability classifications.
