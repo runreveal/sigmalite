@@ -491,6 +491,84 @@ func TestParseRule(t *testing.T) {
 				},
 			},
 		},
+		{
+			filename: "lnx_auditd_unix_shell_configuration_modification.yml",
+			want: &Rule{
+				Title: "Unix Shell Configuration Modification",
+				ID:    "a94cdd87-6c54-4678-a6cc-2814ffe5a13d",
+				Related: []Relation{
+					{
+						ID:   "e74e15cc-c4b6-4c80-b7eb-dfe49feb7fe9",
+						Type: Obsoletes,
+					},
+				},
+				Status:      Test,
+				Description: "Detect unix shell configuration modification. Adversaries may establish persistence through executing malicious commands triggered when a new shell is opened.",
+				References: []string{
+					"https://objective-see.org/blog/blog_0x68.html",
+					"https://www.glitch-cat.com/p/green-lambert-and-attack",
+					"https://www.anomali.com/blog/pulling-linux-rabbit-rabbot-malware-out-of-a-hat",
+				},
+				Author:   "Peter Matkovski, IAI",
+				Date:     NewDate(2023, time.March, 6),
+				Modified: NewDate(2023, time.March, 15),
+				Tags: []string{
+					"attack.persistence",
+					"attack.t1546.004",
+				},
+				LogSource: &LogSource{
+					Product: "linux",
+					Service: "auditd",
+				},
+				Detection: &Detection{
+					Expr: &NamedExpr{
+						Name: "selection",
+						X: &AndExpr{
+							X: []Expr{
+								&SearchAtom{
+									Field:    "type",
+									Patterns: []string{"PATH"},
+								},
+								&SearchAtom{
+									Field: "name",
+									Patterns: []string{
+										"/etc/shells",
+										"/etc/profile",
+										"/etc/profile.d/*",
+										"/etc/bash.bashrc",
+										"/etc/bashrc",
+										"/etc/zsh/zprofile",
+										"/etc/zsh/zshrc",
+										"/etc/zsh/zlogin",
+										"/etc/zsh/zlogout",
+										"/etc/csh.cshrc",
+										"/etc/csh.login",
+										"/root/.bashrc",
+										"/root/.bash_profile",
+										"/root/.profile",
+										"/root/.zshrc",
+										"/root/.zprofile",
+										"/home/*/.bashrc",
+										"/home/*/.zshrc",
+										"/home/*/.bash_profile",
+										"/home/*/.zprofile",
+										"/home/*/.profile",
+										"/home/*/.bash_login",
+										"/home/*/.bash_logout",
+										"/home/*/.zlogin",
+										"/home/*/.zlogout",
+									},
+								},
+							},
+						},
+					},
+				},
+				FalsePositives: []string{
+					"Admin or User activity are expected to generate some false positives",
+				},
+				Level: Medium,
+			},
+		},
 	}
 
 	for _, test := range tests {

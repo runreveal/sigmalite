@@ -196,8 +196,7 @@ func (atom *SearchAtom) compile() *regexp.Regexp {
 		if !isMessage {
 			sb.WriteString("^")
 		}
-		// TODO(soon): Wildcards.
-		sb.WriteString(regexp.QuoteMeta(pat))
+		appendPatternRegexp(sb, pat)
 		if !isMessage {
 			sb.WriteString("$")
 		}
@@ -215,6 +214,44 @@ func (atom *SearchAtom) compile() *regexp.Regexp {
 	atom.mu.Unlock()
 
 	return compiled
+}
+
+// appendPatternRegexp writes a regular expression equivalent to pattern
+// to the given string builder.
+func appendPatternRegexp(sb *strings.Builder, pattern string) {
+	for len(pattern) > 0 {
+		i := strings.IndexAny(pattern, `?*\`)
+		if i == -1 {
+			sb.WriteString(regexp.QuoteMeta(pattern))
+			return
+		}
+		sb.WriteString(regexp.QuoteMeta(pattern[:i]))
+		switch pattern[i] {
+		case '?':
+			sb.WriteString(".")
+			pattern = pattern[i+1:]
+		case '*':
+			sb.WriteString(".*")
+			pattern = pattern[i+1:]
+		case '\\':
+			if i+1 >= len(pattern) {
+				sb.WriteString(`\\`)
+				return
+			}
+			switch pattern[i+1] {
+			case '?', '*', '\\':
+				sb.WriteByte('\\')
+				sb.WriteByte(pattern[i+1])
+				pattern = pattern[i+2:]
+			default:
+				// "Plain backslash not followed by a wildcard can be expressed as single \".
+				sb.WriteString(`\\`)
+				pattern = pattern[i+1:]
+			}
+		default:
+			panic("unreachable")
+		}
+	}
 }
 
 // Status is an enumeration of [Rule] stability classifications.

@@ -76,6 +76,64 @@ func TestDetectionMatches(t *testing.T) {
 			},
 			want: true,
 		},
+		{
+			filename: "whoami.yml",
+			entry: &LogEntry{
+				Fields: map[string]string{
+					"Image": `C:\Windows\System32\whoami.exe`,
+				},
+			},
+			want: true,
+		},
+		{
+			filename: "whoami.yml",
+			entry: &LogEntry{
+				Fields: map[string]string{
+					"Image": "foo",
+				},
+			},
+			want: false,
+		},
+		{
+			filename: "lnx_auditd_unix_shell_configuration_modification.yml",
+			entry: &LogEntry{
+				Fields: map[string]string{
+					"type": "PATH",
+					"name": "/etc/shells",
+				},
+			},
+			want: true,
+		},
+		{
+			filename: "lnx_auditd_unix_shell_configuration_modification.yml",
+			entry: &LogEntry{
+				Fields: map[string]string{
+					"type": "PATH",
+					"name": "/etc/profile.d/01-locale-fix.sh",
+				},
+			},
+			want: true,
+		},
+		{
+			filename: "lnx_auditd_unix_shell_configuration_modification.yml",
+			entry: &LogEntry{
+				Fields: map[string]string{
+					"type": "PATH",
+					"name": "/home/light/.zshrc",
+				},
+			},
+			want: true,
+		},
+		{
+			filename: "lnx_auditd_unix_shell_configuration_modification.yml",
+			entry: &LogEntry{
+				Fields: map[string]string{
+					"type": "PATH",
+					"name": "/var/lib/foo.tmp",
+				},
+			},
+			want: false,
+		},
 	}
 
 	for _, test := range tests {
