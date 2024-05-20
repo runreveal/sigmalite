@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 )
 
 func TestParseRule(t *testing.T) {
@@ -502,7 +503,8 @@ func TestParseRule(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if diff := cmp.Diff(test.want, got); diff != "" {
+			compareAtoms := cmpopts.IgnoreUnexported(SearchAtom{})
+			if diff := cmp.Diff(test.want, got, compareAtoms); diff != "" {
 				t.Errorf("ParseRule(...) (-want +got):\n%s", diff)
 			}
 		})
