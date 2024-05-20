@@ -16,7 +16,7 @@ func TestDetectionMatches(t *testing.T) {
 		want     bool
 	}{
 		{
-			filename: "aws_cloudtrail_disable_logging.yml",
+			filename: "sigma/aws_cloudtrail_disable_logging.yml",
 			entry: &LogEntry{
 				Fields: map[string]string{
 					"eventSource": "cloudtrail.amazonaws.com",
@@ -26,7 +26,7 @@ func TestDetectionMatches(t *testing.T) {
 			want: true,
 		},
 		{
-			filename: "aws_cloudtrail_disable_logging.yml",
+			filename: "sigma/aws_cloudtrail_disable_logging.yml",
 			entry: &LogEntry{
 				Fields: map[string]string{
 					"eventSource": "cloudtrail.amazonaws.com",
@@ -36,7 +36,7 @@ func TestDetectionMatches(t *testing.T) {
 			want: false,
 		},
 		{
-			filename: "aws_cloudtrail_disable_logging.yml",
+			filename: "sigma/aws_cloudtrail_disable_logging.yml",
 			entry: &LogEntry{
 				Fields: map[string]string{
 					"eventSource": "example.com",
@@ -46,7 +46,7 @@ func TestDetectionMatches(t *testing.T) {
 			want: false,
 		},
 		{
-			filename: "aws_cloudtrail_disable_logging.yml",
+			filename: "sigma/aws_cloudtrail_disable_logging.yml",
 			entry: &LogEntry{
 				Fields: map[string]string{
 					"eventSource": "cloudtrail.amazonaws.com",
@@ -56,28 +56,28 @@ func TestDetectionMatches(t *testing.T) {
 			want: false,
 		},
 		{
-			filename: "lnx_buffer_overflows.yml",
+			filename: "sigma/lnx_buffer_overflows.yml",
 			entry: &LogEntry{
 				Message: "hello world",
 			},
 			want: false,
 		},
 		{
-			filename: "lnx_buffer_overflows.yml",
+			filename: "sigma/lnx_buffer_overflows.yml",
 			entry: &LogEntry{
 				Message: "there was an attempt to execute code on stack by main",
 			},
 			want: true,
 		},
 		{
-			filename: "lnx_buffer_overflows.yml",
+			filename: "sigma/lnx_buffer_overflows.yml",
 			entry: &LogEntry{
 				Message: "THERE WAS AN ATTEMPT TO EXECUTE CODE ON STACK BY MAIN",
 			},
 			want: true,
 		},
 		{
-			filename: "whoami.yml",
+			filename: "sigma/whoami.yml",
 			entry: &LogEntry{
 				Fields: map[string]string{
 					"Image": `C:\Windows\System32\whoami.exe`,
@@ -86,7 +86,7 @@ func TestDetectionMatches(t *testing.T) {
 			want: true,
 		},
 		{
-			filename: "whoami.yml",
+			filename: "sigma/whoami.yml",
 			entry: &LogEntry{
 				Fields: map[string]string{
 					"Image": "foo",
@@ -95,7 +95,7 @@ func TestDetectionMatches(t *testing.T) {
 			want: false,
 		},
 		{
-			filename: "lnx_auditd_unix_shell_configuration_modification.yml",
+			filename: "sigma/lnx_auditd_unix_shell_configuration_modification.yml",
 			entry: &LogEntry{
 				Fields: map[string]string{
 					"type": "PATH",
@@ -105,7 +105,7 @@ func TestDetectionMatches(t *testing.T) {
 			want: true,
 		},
 		{
-			filename: "lnx_auditd_unix_shell_configuration_modification.yml",
+			filename: "sigma/lnx_auditd_unix_shell_configuration_modification.yml",
 			entry: &LogEntry{
 				Fields: map[string]string{
 					"type": "PATH",
@@ -115,7 +115,7 @@ func TestDetectionMatches(t *testing.T) {
 			want: true,
 		},
 		{
-			filename: "lnx_auditd_unix_shell_configuration_modification.yml",
+			filename: "sigma/lnx_auditd_unix_shell_configuration_modification.yml",
 			entry: &LogEntry{
 				Fields: map[string]string{
 					"type": "PATH",
@@ -125,7 +125,7 @@ func TestDetectionMatches(t *testing.T) {
 			want: true,
 		},
 		{
-			filename: "lnx_auditd_unix_shell_configuration_modification.yml",
+			filename: "sigma/lnx_auditd_unix_shell_configuration_modification.yml",
 			entry: &LogEntry{
 				Fields: map[string]string{
 					"type": "PATH",

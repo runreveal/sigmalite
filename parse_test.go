@@ -5,6 +5,7 @@ package sigma
 
 import (
 	"os"
+	"path"
 	"path/filepath"
 	"testing"
 	"time"
@@ -19,7 +20,7 @@ func TestParseRule(t *testing.T) {
 		want     *Rule
 	}{
 		{
-			filename: "whoami.yml",
+			filename: "sigma/whoami.yml",
 			want: &Rule{
 				Title:       "Whoami Execution",
 				Description: "Detects a whoami.exe execution",
@@ -45,7 +46,7 @@ func TestParseRule(t *testing.T) {
 			},
 		},
 		{
-			filename: "aws_cloudtrail_disable_logging.yml",
+			filename: "sigma/aws_cloudtrail_disable_logging.yml",
 			want: &Rule{
 				Title:       "AWS CloudTrail Important Change",
 				ID:          "4db60cc0-36fb-42b7-9b58-a5b53019fb74",
@@ -93,7 +94,7 @@ func TestParseRule(t *testing.T) {
 			},
 		},
 		{
-			filename: "lnx_buffer_overflows.yml",
+			filename: "sigma/lnx_buffer_overflows.yml",
 			want: &Rule{
 				Title:       "Buffer Overflow Attempts",
 				ID:          "18b042f0-2ecd-4b6e-9f8d-aa7a7e7de781",
@@ -158,7 +159,7 @@ func TestParseRule(t *testing.T) {
 			},
 		},
 		{
-			filename: "proxy_ua_susp_base64.yml",
+			filename: "sigma/proxy_ua_susp_base64.yml",
 			want: &Rule{
 				Title: "Potential Base64 Encoded User-Agent",
 				ID:    "894a8613-cf12-48b3-8e57-9085f54aa0c3",
@@ -199,7 +200,7 @@ func TestParseRule(t *testing.T) {
 			},
 		},
 		{
-			filename: "lnx_cron_crontab_file_modification.yml",
+			filename: "sigma/lnx_cron_crontab_file_modification.yml",
 			want: &Rule{
 				Title:       "Modifying Crontab",
 				ID:          "af202fd3-7bff-4212-a25a-fb34606cfcbe",
@@ -233,7 +234,7 @@ func TestParseRule(t *testing.T) {
 			},
 		},
 		{
-			filename: "lnx_auditd_coinminer.yml",
+			filename: "sigma/lnx_auditd_coinminer.yml",
 			want: &Rule{
 				Title:       "Possible Coin Miner CPU Priority Param",
 				ID:          "071d5e5a-9cef-47ec-bc4e-a42e34d8d0ed",
@@ -322,7 +323,7 @@ func TestParseRule(t *testing.T) {
 			},
 		},
 		{
-			filename: "file_access_win_browser_credential_access.yml",
+			filename: "sigma/file_access_win_browser_credential_access.yml",
 			want: &Rule{
 				Title:  "Access To Browser Credential Files By Uncommon Application",
 				ID:     "91cb43db-302a-47e3-b3c8-7ede481e27bf",
@@ -492,7 +493,7 @@ func TestParseRule(t *testing.T) {
 			},
 		},
 		{
-			filename: "lnx_auditd_unix_shell_configuration_modification.yml",
+			filename: "sigma/lnx_auditd_unix_shell_configuration_modification.yml",
 			want: &Rule{
 				Title: "Unix Shell Configuration Modification",
 				ID:    "a94cdd87-6c54-4678-a6cc-2814ffe5a13d",
@@ -572,7 +573,7 @@ func TestParseRule(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		t.Run(test.filename, func(t *testing.T) {
+		t.Run(path.Base(test.filename), func(t *testing.T) {
 			data, err := os.ReadFile(filepath.Join("testdata", filepath.FromSlash(test.filename)))
 			if err != nil {
 				t.Fatal(err)
