@@ -133,11 +133,11 @@ type OrExpr struct {
 
 func (o *OrExpr) ExprMatches(entry *LogEntry) bool {
 	for _, x := range o.X {
-		if !x.ExprMatches(entry) {
-			return false
+		if x.ExprMatches(entry) {
+			return true
 		}
 	}
-	return true
+	return false
 }
 
 // A SearchAtom is an [Expr] that matches against a single field.
