@@ -461,6 +461,9 @@ func parseSearchMap(node *yaml.Node) (Expr, error) {
 			return nil, fmt.Errorf("%s: unsupported value", k)
 		}
 
+		if err := atom.Validate(); err != nil {
+			return nil, fmt.Errorf("%s: %v", k, err)
+		}
 		container.X = append(container.X, atom)
 	}
 

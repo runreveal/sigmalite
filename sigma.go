@@ -8,6 +8,7 @@
 package sigma
 
 import (
+	"fmt"
 	"regexp"
 	"slices"
 	"strings"
@@ -154,31 +155,59 @@ type SearchAtom struct {
 
 	mu                sync.RWMutex
 	compiledIsMessage bool
+	compiledModifiers []string
 	compiledPatterns  []string
-	compiled          *regexp.Regexp
+	compiled          []*regexp.Regexp
+}
+
+// Validate returns an error if the search atom won't match
+// because the modifiers or patterns are invalid.
+func (atom *SearchAtom) Validate() error {
+	if len(atom.Patterns) == 0 {
+		return fmt.Errorf("no patterns")
+	}
+
+	isRE := false
+	for _, mod := range atom.Modifiers {
+		switch mod {
+		case "re":
+			isRE = true
+		case "contains", "all", "startswith", "endswith", "windash":
+			// No validation required.
+		default:
+			return fmt.Errorf("unknown modifier %q", mod)
+		}
+	}
+	if isRE {
+		for i, pat := range atom.Patterns {
+			if _, err := regexp.Compile(pat); err != nil {
+				return fmt.Errorf("pattern %d: %v", i+1, err)
+			}
+		}
+	}
+	return nil
 }
 
 func (atom *SearchAtom) ExprMatches(entry *LogEntry) bool {
-	if len(atom.Patterns) == 0 {
-		// Short-circuit if no patterns.
-		// Avoids a case where atom.compiled is nil.
+	if err := atom.Validate(); err != nil {
 		return false
 	}
-
 	field := entry.Message
 	if atom.Field != "" {
 		field = entry.Fields[atom.Field]
 	}
-	// TODO(soon): Modifiers.
-	return atom.compile().MatchString(field)
+	for _, pat := range atom.compile() {
+		if !pat.MatchString(field) {
+			return false
+		}
+	}
+	return true
 }
 
-func (atom *SearchAtom) compile() *regexp.Regexp {
-	isMessage := atom.Field == ""
-
+func (atom *SearchAtom) compile() []*regexp.Regexp {
 	// Common case: we already compiled the regexp.
 	atom.mu.RLock()
-	if slices.Equal(atom.compiledPatterns, atom.Patterns) && isMessage == atom.compiledIsMessage {
+	if atom.lockedCompileUpToDate() {
 		compiled := atom.compiled
 		atom.mu.RUnlock()
 		return compiled
@@ -188,26 +217,31 @@ func (atom *SearchAtom) compile() *regexp.Regexp {
 	// Compile a new regular expression
 	// (outside the critical section to reduce contention).
 	sb := new(strings.Builder)
-	for i, pat := range atom.Patterns {
-		if i > 0 {
-			sb.WriteString("|")
+	var compiled []*regexp.Regexp
+	if slices.Contains(atom.Modifiers, "all") {
+		compiled = make([]*regexp.Regexp, 0, len(atom.Patterns))
+		for _, pat := range atom.Patterns {
+			sb.Reset()
+			appendPatternRegexp(sb, pat, atom.Modifiers, atom.isMessage())
+			compiled = append(compiled, regexp.MustCompile(sb.String()))
 		}
-		sb.WriteString("(?i:") // Case-insensitive, non-capturing group.
-		if !isMessage {
-			sb.WriteString("^")
+	} else {
+		for i, pat := range atom.Patterns {
+			if i > 0 {
+				sb.WriteString("|")
+			}
+			appendPatternRegexp(sb, pat, atom.Modifiers, atom.isMessage())
 		}
-		appendPatternRegexp(sb, pat)
-		if !isMessage {
-			sb.WriteString("$")
-		}
-		sb.WriteString(")")
+		compiled = []*regexp.Regexp{regexp.MustCompile(sb.String())}
 	}
-	compiled := regexp.MustCompile(sb.String())
+	modifiersCopy := slices.Clone(atom.Modifiers)
 	patternsCopy := slices.Clone(atom.Patterns)
 
 	// Update cache.
 	atom.mu.Lock()
-	if !slices.Equal(atom.compiledPatterns, atom.Patterns) || isMessage != atom.compiledIsMessage {
+	if !atom.lockedCompileUpToDate() {
+		atom.compiledIsMessage = atom.isMessage()
+		atom.compiledModifiers = modifiersCopy
 		atom.compiledPatterns = patternsCopy
 		atom.compiled = compiled
 	}
@@ -216,14 +250,41 @@ func (atom *SearchAtom) compile() *regexp.Regexp {
 	return compiled
 }
 
+func (atom *SearchAtom) isMessage() bool {
+	return atom.Field == ""
+}
+
+func (atom *SearchAtom) lockedCompileUpToDate() bool {
+	return atom.isMessage() == atom.compiledIsMessage &&
+		slices.Equal(atom.compiledPatterns, atom.Patterns) &&
+		slices.Equal(atom.compiledModifiers, atom.compiledModifiers)
+}
+
 // appendPatternRegexp writes a regular expression equivalent to pattern
 // to the given string builder.
-func appendPatternRegexp(sb *strings.Builder, pattern string) {
+// appendPatternRegexp assumes that the pattern is valid.
+func appendPatternRegexp(sb *strings.Builder, pattern string, modifiers []string, isMessage bool) {
+	if slices.Contains(modifiers, "re") {
+		sb.WriteString("(?:")
+		sb.WriteString(pattern)
+		sb.WriteString(")")
+		return
+	}
+
+	contains := slices.Contains(modifiers, "contains")
+
+	sb.WriteString("(?i:") // Case-insensitive, non-capturing group.
+	if !isMessage && !contains && !slices.Contains(modifiers, "endswith") {
+		sb.WriteString("^")
+	}
+	sb.WriteString("(?:")
+
+patternLoop:
 	for len(pattern) > 0 {
 		i := strings.IndexAny(pattern, `?*\`)
 		if i == -1 {
 			sb.WriteString(regexp.QuoteMeta(pattern))
-			return
+			break patternLoop
 		}
 		sb.WriteString(regexp.QuoteMeta(pattern[:i]))
 		switch pattern[i] {
@@ -236,7 +297,7 @@ func appendPatternRegexp(sb *strings.Builder, pattern string) {
 		case '\\':
 			if i+1 >= len(pattern) {
 				sb.WriteString(`\\`)
-				return
+				break patternLoop
 			}
 			switch pattern[i+1] {
 			case '?', '*', '\\':
@@ -252,6 +313,53 @@ func appendPatternRegexp(sb *strings.Builder, pattern string) {
 			panic("unreachable")
 		}
 	}
+
+	if slices.Contains(modifiers, "windash") {
+		sb.WriteString("|")
+	windashLoop:
+		for len(pattern) > 0 {
+			i := strings.IndexAny(pattern, `?*\-`)
+			if i == -1 {
+				sb.WriteString(regexp.QuoteMeta(pattern))
+				break windashLoop
+			}
+			sb.WriteString(regexp.QuoteMeta(pattern[:i]))
+			switch pattern[i] {
+			case '?':
+				sb.WriteString(".")
+				pattern = pattern[i+1:]
+			case '*':
+				sb.WriteString(".*")
+				pattern = pattern[i+1:]
+			case '-':
+				sb.WriteString("/")
+				pattern = pattern[i+1:]
+			case '\\':
+				if i+1 >= len(pattern) {
+					sb.WriteString(`\\`)
+					break windashLoop
+				}
+				switch pattern[i+1] {
+				case '?', '*', '\\':
+					sb.WriteByte('\\')
+					sb.WriteByte(pattern[i+1])
+					pattern = pattern[i+2:]
+				default:
+					// "Plain backslash not followed by a wildcard can be expressed as single \".
+					sb.WriteString(`\\`)
+					pattern = pattern[i+1:]
+				}
+			default:
+				panic("unreachable")
+			}
+		}
+	}
+
+	sb.WriteString(")")
+	if !isMessage && !contains && !slices.Contains(modifiers, "startswith") {
+		sb.WriteString("$")
+	}
+	sb.WriteString(")") // Close non-capturing group.
 }
 
 // Status is an enumeration of [Rule] stability classifications.

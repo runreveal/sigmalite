@@ -134,6 +134,75 @@ func TestDetectionMatches(t *testing.T) {
 			},
 			want: false,
 		},
+		{
+			filename: "sigma/lnx_auditd_coinminer.yml",
+			entry: &LogEntry{
+				Fields: map[string]string{
+					"comm": "echo",
+					"a1":   "hello",
+				},
+			},
+			want: false,
+		},
+		{
+			filename: "sigma/lnx_auditd_coinminer.yml",
+			entry: &LogEntry{
+				Fields: map[string]string{
+					"comm": "echo",
+					"a1":   "--cpu-priority=10",
+					"a2":   "hello",
+				},
+			},
+			want: true,
+		},
+		{
+			filename: "sigma/proxy_ua_susp_base64.yml",
+			entry: &LogEntry{
+				Fields: map[string]string{
+					"c-useragent": "lynx version=1.0",
+				},
+			},
+			want: false,
+		},
+		{
+			filename: "sigma/proxy_ua_susp_base64.yml",
+			entry: &LogEntry{
+				Fields: map[string]string{
+					"c-useragent": "based==",
+				},
+			},
+			want: true,
+		},
+		{
+			filename: "sigma/file_access_win_browser_credential_access.yml",
+			entry: &LogEntry{
+				Fields: map[string]string{
+					"Image":    "example.exe",
+					"FileName": `C:\foo.txt`,
+				},
+			},
+			want: false,
+		},
+		{
+			filename: "sigma/file_access_win_browser_credential_access.yml",
+			entry: &LogEntry{
+				Fields: map[string]string{
+					"Image":    "example.exe",
+					"FileName": `C:\Users\light\AppData\Local\Chrome\User Data\Default\Login Data`,
+				},
+			},
+			want: true,
+		},
+		{
+			filename: "sigma/file_access_win_browser_credential_access.yml",
+			entry: &LogEntry{
+				Fields: map[string]string{
+					"Image":    "System",
+					"FileName": `C:\Users\light\AppData\Local\Chrome\User Data\Default\Login Data`,
+				},
+			},
+			want: false,
+		},
 	}
 
 	for _, test := range tests {
