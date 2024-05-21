@@ -279,78 +279,57 @@ func appendPatternRegexp(sb *strings.Builder, pattern string, modifiers []string
 	}
 	sb.WriteString("(?:")
 
-patternLoop:
-	for len(pattern) > 0 {
-		i := strings.IndexAny(pattern, `?*\`)
-		if i == -1 {
-			sb.WriteString(regexp.QuoteMeta(pattern))
-			break patternLoop
-		}
-		sb.WriteString(regexp.QuoteMeta(pattern[:i]))
-		switch pattern[i] {
+	for i := 0; i < len(pattern); i++ {
+		switch c := pattern[i]; c {
 		case '?':
 			sb.WriteString(".")
-			pattern = pattern[i+1:]
 		case '*':
 			sb.WriteString(".*")
-			pattern = pattern[i+1:]
 		case '\\':
 			if i+1 >= len(pattern) {
 				sb.WriteString(`\\`)
-				break patternLoop
+				continue
 			}
 			switch pattern[i+1] {
 			case '?', '*', '\\':
 				sb.WriteByte('\\')
 				sb.WriteByte(pattern[i+1])
-				pattern = pattern[i+2:]
+				i++
 			default:
 				// "Plain backslash not followed by a wildcard can be expressed as single \".
 				sb.WriteString(`\\`)
-				pattern = pattern[i+1:]
 			}
 		default:
-			panic("unreachable")
+			appendQuoteMeta(sb, pattern[i:i+1])
 		}
 	}
 
 	if slices.Contains(modifiers, "windash") {
 		sb.WriteString("|")
-	windashLoop:
-		for len(pattern) > 0 {
-			i := strings.IndexAny(pattern, `?*\-`)
-			if i == -1 {
-				sb.WriteString(regexp.QuoteMeta(pattern))
-				break windashLoop
-			}
-			sb.WriteString(regexp.QuoteMeta(pattern[:i]))
-			switch pattern[i] {
+		for i := 0; i < len(pattern); i++ {
+			switch c := pattern[i]; c {
 			case '?':
 				sb.WriteString(".")
-				pattern = pattern[i+1:]
 			case '*':
 				sb.WriteString(".*")
-				pattern = pattern[i+1:]
 			case '-':
 				sb.WriteString("/")
-				pattern = pattern[i+1:]
 			case '\\':
 				if i+1 >= len(pattern) {
 					sb.WriteString(`\\`)
-					break windashLoop
+					continue
 				}
 				switch pattern[i+1] {
 				case '?', '*', '\\':
 					sb.WriteByte('\\')
 					sb.WriteByte(pattern[i+1])
-					pattern = pattern[i+2:]
+					i++
 				default:
 					// "Plain backslash not followed by a wildcard can be expressed as single \".
 					sb.WriteString(`\\`)
-					pattern = pattern[i+1:]
 				}
 			default:
-				panic("unreachable")
+				appendQuoteMeta(sb, pattern[i:i+1])
 			}
 		}
 	}

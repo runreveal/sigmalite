@@ -537,10 +537,10 @@ func (ssi sortedSearchIdentifiers) filter(pattern string) sortedSearchIdentifier
 	for {
 		i := strings.Index(pattern, "*")
 		if i == -1 {
-			sb.WriteString(regexp.QuoteMeta(pattern))
+			appendQuoteMeta(sb, pattern)
 			break
 		}
-		sb.WriteString(regexp.QuoteMeta(pattern[:i]))
+		appendQuoteMeta(sb, pattern[:i])
 		sb.WriteString(".*")
 		pattern = pattern[i+len("*"):]
 	}
@@ -558,4 +558,27 @@ func (ssi sortedSearchIdentifiers) filter(pattern string) sortedSearchIdentifier
 
 func compareNamedExpr(y *NamedExpr, name string) int {
 	return cmp.Compare(y.Name, name)
+}
+
+// appendQuoteMeta is the equivalent of sb.WriteString(regexp.QuoteMeta(s)),
+// but reduces allocations.
+func appendQuoteMeta(sb *strings.Builder, s string) {
+	n := len(s)
+	for _, c := range []byte(s) {
+		if isRegexpSpecial(c) {
+			n++
+		}
+	}
+
+	sb.Grow(n)
+	for _, c := range []byte(s) {
+		if isRegexpSpecial(c) {
+			sb.WriteByte('\\')
+		}
+		sb.WriteByte(c)
+	}
+}
+
+func isRegexpSpecial(c byte) bool {
+	return strings.IndexByte(`\.+*?()|[]{}^$`, c) != -1
 }
