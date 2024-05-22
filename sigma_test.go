@@ -13,6 +13,7 @@ func TestDetectionMatches(t *testing.T) {
 	tests := []struct {
 		filename string
 		entry    *LogEntry
+		options  *MatchOptions
 		want     bool
 	}{
 		{
@@ -236,6 +237,54 @@ func TestDetectionMatches(t *testing.T) {
 			},
 			want: false,
 		},
+		{
+			filename: "sigma/win_security_admin_logon.yml",
+			entry: &LogEntry{
+				Fields: map[string]string{
+					"EventID":         "4672",
+					"SubjectUserSid":  "S-1-5-18",
+					"SubjectUserName": "AdminMachine",
+				},
+			},
+			options: &MatchOptions{
+				Placeholders: map[string][]string{
+					"Admins_Workstations": {"OtherAdminMachine", "AdminMachine"},
+				},
+			},
+			want: false,
+		},
+		{
+			filename: "sigma/win_security_admin_logon.yml",
+			entry: &LogEntry{
+				Fields: map[string]string{
+					"EventID":         "4672",
+					"SubjectUserSid":  "S-1-2-3",
+					"SubjectUserName": "AdminMachine",
+				},
+			},
+			options: &MatchOptions{
+				Placeholders: map[string][]string{
+					"Admins_Workstations": {"OtherAdminMachine", "AdminMachine"},
+				},
+			},
+			want: false,
+		},
+		{
+			filename: "sigma/win_security_admin_logon.yml",
+			entry: &LogEntry{
+				Fields: map[string]string{
+					"EventID":         "4672",
+					"SubjectUserSid":  "S-1-2-3",
+					"SubjectUserName": "UserMachine",
+				},
+			},
+			options: &MatchOptions{
+				Placeholders: map[string][]string{
+					"Admins_Workstations": {"OtherAdminMachine", "AdminMachine"},
+				},
+			},
+			want: true,
+		},
 	}
 
 	for _, test := range tests {
@@ -249,9 +298,10 @@ func TestDetectionMatches(t *testing.T) {
 			t.Errorf("%s: %v", test.filename, err)
 			continue
 		}
-		got := rule.Detection.Matches(test.entry)
+		got := rule.Detection.Matches(test.entry, test.options)
 		if got != test.want {
-			t.Errorf("ParseRule(%q).Detection.Matches(%+v) = %t; want %t", test.filename, test.entry, got, test.want)
+			t.Errorf("ParseRule(%q).Detection.Matches(%+v, %+v) = %t; want %t",
+				test.filename, test.entry, test.options, got, test.want)
 		}
 	}
 }

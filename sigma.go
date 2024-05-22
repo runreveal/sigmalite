@@ -72,14 +72,19 @@ type LogEntry struct {
 	Fields  map[string]string
 }
 
+// MatchOptions are the parameters to [Detection.Matches] and [Expr.ExprMatches].
+type MatchOptions struct {
+	Placeholders map[string][]string
+}
+
 // Detection describes the pattern that a [Rule] is matching on.
 type Detection struct {
 	Expr Expr
 }
 
 // Matches reports whether the entry matches the detection's expression.
-func (d *Detection) Matches(entry *LogEntry) bool {
-	return d.Expr.ExprMatches(entry)
+func (d *Detection) Matches(entry *LogEntry, opts *MatchOptions) bool {
+	return d.Expr.ExprMatches(entry, opts)
 }
 
 // An Expr is a sub-expression inside of a [Detection].
@@ -88,7 +93,7 @@ func (d *Detection) Matches(entry *LogEntry) bool {
 // Implementations of ExprMatches must be safe to call concurrently
 // from multiple goroutines.
 type Expr interface {
-	ExprMatches(*LogEntry) bool
+	ExprMatches(*LogEntry, *MatchOptions) bool
 }
 
 // NamedExpr is an [Expr] that has a name.
@@ -98,8 +103,8 @@ type NamedExpr struct {
 	X    Expr
 }
 
-func (n *NamedExpr) ExprMatches(entry *LogEntry) bool {
-	return n.X.ExprMatches(entry)
+func (n *NamedExpr) ExprMatches(entry *LogEntry, opts *MatchOptions) bool {
+	return n.X.ExprMatches(entry, opts)
 }
 
 // NotExpr is a negated [Expr].
@@ -107,8 +112,8 @@ type NotExpr struct {
 	X Expr
 }
 
-func (x *NotExpr) ExprMatches(entry *LogEntry) bool {
-	return !x.X.ExprMatches(entry)
+func (x *NotExpr) ExprMatches(entry *LogEntry, opts *MatchOptions) bool {
+	return !x.X.ExprMatches(entry, opts)
 }
 
 // AndExpr is an [Expr] is an expression
@@ -117,9 +122,9 @@ type AndExpr struct {
 	X []Expr
 }
 
-func (a *AndExpr) ExprMatches(entry *LogEntry) bool {
+func (a *AndExpr) ExprMatches(entry *LogEntry, opts *MatchOptions) bool {
 	for _, x := range a.X {
-		if !x.ExprMatches(entry) {
+		if !x.ExprMatches(entry, opts) {
 			return false
 		}
 	}
@@ -132,9 +137,9 @@ type OrExpr struct {
 	X []Expr
 }
 
-func (o *OrExpr) ExprMatches(entry *LogEntry) bool {
+func (o *OrExpr) ExprMatches(entry *LogEntry, opts *MatchOptions) bool {
 	for _, x := range o.X {
-		if x.ExprMatches(entry) {
+		if x.ExprMatches(entry, opts) {
 			return true
 		}
 	}
@@ -168,17 +173,32 @@ func (atom *SearchAtom) Validate() error {
 	}
 
 	isRE := false
-	for _, mod := range atom.Modifiers {
+	expand := false
+	for i, mod := range atom.Modifiers {
 		switch mod {
 		case "re":
 			isRE = true
+			if len(atom.Modifiers) != 1 {
+				return fmt.Errorf("re must be only modifier")
+			}
 		case "contains", "all", "startswith", "endswith", "windash":
-			// No validation required.
+			// No special handling required.
+		case "expand":
+			expand = true
+			if i != 0 {
+				return fmt.Errorf("expand can only be the first modifier")
+			}
+			if len(atom.Patterns) != 1 {
+				return fmt.Errorf("expand has %d values (can only have 1)", len(atom.Patterns))
+			}
+			if _, ok := cutPlaceholder(atom.Patterns[0]); !ok {
+				return fmt.Errorf("placeholder %q must start and end with '%%'", atom.Patterns[0])
+			}
 		default:
 			return fmt.Errorf("unknown modifier %q", mod)
 		}
 	}
-	if isRE {
+	if isRE && !expand {
 		for i, pat := range atom.Patterns {
 			if _, err := regexp.Compile(pat); err != nil {
 				return fmt.Errorf("pattern %d: %v", i+1, err)
@@ -188,7 +208,26 @@ func (atom *SearchAtom) Validate() error {
 	return nil
 }
 
-func (atom *SearchAtom) ExprMatches(entry *LogEntry) bool {
+func (atom *SearchAtom) expandPatterns(placeholders map[string][]string) []string {
+	if len(atom.Modifiers) > 0 && atom.Modifiers[0] == "expand" {
+		name, ok := cutPlaceholder(atom.Patterns[0])
+		if !ok {
+			return nil
+		}
+		patterns := placeholders[name]
+		if slices.Contains(atom.Modifiers, "re") {
+			for _, pat := range patterns {
+				if _, err := regexp.Compile(pat); err != nil {
+					return nil
+				}
+			}
+		}
+		return patterns
+	}
+	return atom.Patterns
+}
+
+func (atom *SearchAtom) ExprMatches(entry *LogEntry, opts *MatchOptions) bool {
 	if err := atom.Validate(); err != nil {
 		return false
 	}
@@ -196,7 +235,11 @@ func (atom *SearchAtom) ExprMatches(entry *LogEntry) bool {
 	if atom.Field != "" {
 		field = entry.Fields[atom.Field]
 	}
-	for _, pat := range atom.compile() {
+	var placeholders map[string][]string
+	if opts != nil {
+		placeholders = opts.Placeholders
+	}
+	for _, pat := range atom.compile(placeholders) {
 		if !pat.MatchString(field) {
 			return false
 		}
@@ -204,10 +247,12 @@ func (atom *SearchAtom) ExprMatches(entry *LogEntry) bool {
 	return true
 }
 
-func (atom *SearchAtom) compile() []*regexp.Regexp {
+func (atom *SearchAtom) compile(placeholders map[string][]string) []*regexp.Regexp {
+	patterns := atom.expandPatterns(placeholders)
+
 	// Common case: we already compiled the regexp.
 	atom.mu.RLock()
-	if atom.lockedCompileUpToDate() {
+	if atom.lockedCompileUpToDate(patterns) {
 		compiled := atom.compiled
 		atom.mu.RUnlock()
 		return compiled
@@ -219,14 +264,14 @@ func (atom *SearchAtom) compile() []*regexp.Regexp {
 	sb := new(strings.Builder)
 	var compiled []*regexp.Regexp
 	if slices.Contains(atom.Modifiers, "all") {
-		compiled = make([]*regexp.Regexp, 0, len(atom.Patterns))
-		for _, pat := range atom.Patterns {
+		compiled = make([]*regexp.Regexp, 0, len(patterns))
+		for _, pat := range patterns {
 			sb.Reset()
 			appendPatternRegexp(sb, pat, atom.Modifiers, atom.isMessage())
 			compiled = append(compiled, regexp.MustCompile(sb.String()))
 		}
 	} else {
-		for i, pat := range atom.Patterns {
+		for i, pat := range patterns {
 			if i > 0 {
 				sb.WriteString("|")
 			}
@@ -235,11 +280,11 @@ func (atom *SearchAtom) compile() []*regexp.Regexp {
 		compiled = []*regexp.Regexp{regexp.MustCompile(sb.String())}
 	}
 	modifiersCopy := slices.Clone(atom.Modifiers)
-	patternsCopy := slices.Clone(atom.Patterns)
+	patternsCopy := slices.Clone(patterns)
 
 	// Update cache.
 	atom.mu.Lock()
-	if !atom.lockedCompileUpToDate() {
+	if !atom.lockedCompileUpToDate(patterns) {
 		atom.compiledIsMessage = atom.isMessage()
 		atom.compiledModifiers = modifiersCopy
 		atom.compiledPatterns = patternsCopy
@@ -254,9 +299,9 @@ func (atom *SearchAtom) isMessage() bool {
 	return atom.Field == ""
 }
 
-func (atom *SearchAtom) lockedCompileUpToDate() bool {
+func (atom *SearchAtom) lockedCompileUpToDate(patterns []string) bool {
 	return atom.isMessage() == atom.compiledIsMessage &&
-		slices.Equal(atom.compiledPatterns, atom.Patterns) &&
+		slices.Equal(atom.compiledPatterns, patterns) &&
 		slices.Equal(atom.compiledModifiers, atom.compiledModifiers)
 }
 
@@ -339,6 +384,13 @@ func appendPatternRegexp(sb *strings.Builder, pattern string, modifiers []string
 		sb.WriteString("$")
 	}
 	sb.WriteString(")") // Close non-capturing group.
+}
+
+func cutPlaceholder(s string) (_ string, ok bool) {
+	if len(s) < 2 || s[0] != '%' || s[len(s)-1] != '%' {
+		return "", false
+	}
+	return s[1 : len(s)-1], true
 }
 
 // Status is an enumeration of [Rule] stability classifications.

@@ -646,6 +646,74 @@ func TestParseRule(t *testing.T) {
 				Level: High,
 			},
 		},
+		{
+			filename: "sigma/win_security_admin_logon.yml",
+			want: &Rule{
+				Title:       "User with Privileges Logon",
+				ID:          "94309181-d345-4cbf-b5fe-061769bdf9cb",
+				Status:      Test,
+				Description: `Detects logon with "Special groups" and "Special Privileges" can be thought of as Administrator groups or privileges.`,
+				References: []string{
+					"https://github.com/Yamato-Security/EnableWindowsLogSettings/blob/7f6d755d45ac7cc9fc35b0cbf498e6aa4ef19def/ConfiguringSecurityLogAuditPolicies.md",
+					"https://learn.microsoft.com/en-us/windows/security/threat-protection/auditing/event-4672",
+					"https://learn.microsoft.com/en-us/windows/security/threat-protection/auditing/event-4964",
+				},
+				Author:   "frack113",
+				Date:     NewDate(2022, time.October, 14),
+				Modified: NewDate(2023, time.December, 14),
+				Tags: []string{
+					"attack.defense_evasion",
+					"attack.lateral_movement",
+					"attack.credential_access",
+					"attack.t1558",
+					"attack.t1649",
+					"attack.t1550",
+				},
+				LogSource: &LogSource{
+					Service: "security",
+					Product: "windows",
+				},
+				Detection: &Detection{
+					Expr: &AndExpr{
+						X: []Expr{
+							&NamedExpr{
+								Name: "selection",
+								X: &SearchAtom{
+									Field: "EventID",
+									Patterns: []string{
+										"4672",
+										"4964",
+									},
+								},
+							},
+							&NotExpr{
+								X: &OrExpr{
+									X: []Expr{
+										&NamedExpr{
+											Name: "filter_main_local_system",
+											X: &SearchAtom{
+												Field:    "SubjectUserSid",
+												Patterns: []string{"S-1-5-18"},
+											},
+										},
+										&NamedExpr{
+											Name: "filter_main_valid_account",
+											X: &SearchAtom{
+												Field:     "SubjectUserName",
+												Modifiers: []string{"expand"},
+												Patterns:  []string{"%Admins_Workstations%"},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+				FalsePositives: []string{"Unknown"},
+				Level:          Low,
+			},
+		},
 	}
 
 	for _, test := range tests {
