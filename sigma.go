@@ -188,11 +188,10 @@ func (atom *SearchAtom) Validate() error {
 			if i != 0 {
 				return fmt.Errorf("expand can only be the first modifier")
 			}
-			if len(atom.Patterns) != 1 {
-				return fmt.Errorf("expand has %d values (can only have 1)", len(atom.Patterns))
-			}
-			if _, ok := cutPlaceholder(atom.Patterns[0]); !ok {
-				return fmt.Errorf("placeholder %q must start and end with '%%'", atom.Patterns[0])
+			for _, placeholder := range atom.Patterns {
+				if _, ok := cutPlaceholder(placeholder); !ok {
+					return fmt.Errorf("placeholder %q must start and end with '%%'", placeholder)
+				}
 			}
 		default:
 			return fmt.Errorf("unknown modifier %q", mod)
@@ -210,16 +209,21 @@ func (atom *SearchAtom) Validate() error {
 
 func (atom *SearchAtom) expandPatterns(placeholders map[string][]string) []string {
 	if len(atom.Modifiers) > 0 && atom.Modifiers[0] == "expand" {
-		name, ok := cutPlaceholder(atom.Patterns[0])
-		if !ok {
-			return nil
-		}
-		patterns := placeholders[name]
-		if slices.Contains(atom.Modifiers, "re") {
-			for _, pat := range patterns {
-				if _, err := regexp.Compile(pat); err != nil {
-					return nil
+		var patterns []string
+		for _, placeholder := range atom.Patterns {
+			name, ok := cutPlaceholder(placeholder)
+			if !ok {
+				continue
+			}
+			if slices.Contains(atom.Modifiers, "re") {
+				for _, pat := range placeholders[name] {
+					if _, err := regexp.Compile(pat); err != nil {
+						continue
+					}
+					patterns = append(patterns, pat)
 				}
+			} else {
+				patterns = append(patterns, placeholders[name]...)
 			}
 		}
 		return patterns
@@ -249,6 +253,10 @@ func (atom *SearchAtom) ExprMatches(entry *LogEntry, opts *MatchOptions) bool {
 
 func (atom *SearchAtom) compile(placeholders map[string][]string) []*regexp.Regexp {
 	patterns := atom.expandPatterns(placeholders)
+	if len(patterns) == 0 {
+		// Can happen if the placeholders are invalid.
+		return nil
+	}
 
 	// Common case: we already compiled the regexp.
 	atom.mu.RLock()
