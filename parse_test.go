@@ -570,6 +570,82 @@ func TestParseRule(t *testing.T) {
 				Level: Medium,
 			},
 		},
+		{
+			filename: "sigma/win_system_susp_service_installation_script.yml",
+			want: &Rule{
+				Title:       "Suspicious Service Installation Script",
+				ID:          "70f00d10-60b2-4f34-b9a0-dc3df3fe762a",
+				Status:      Test,
+				Description: "Detects suspicious service installation scripts",
+				References:  []string{"Internal Research"},
+				Author:      "pH-T (Nextron Systems)",
+				Date:        NewDate(2022, time.March, 18),
+				Modified:    NewDate(2024, time.March, 5),
+				Tags: []string{
+					"attack.persistence",
+					"attack.privilege_escalation",
+					"car.2013-09-005",
+					"attack.t1543.003",
+				},
+				LogSource: &LogSource{
+					Product: "windows",
+					Service: "system",
+				},
+				Detection: &Detection{
+					Expr: &AndExpr{
+						X: []Expr{
+							&NamedExpr{
+								Name: "selection_binaries",
+								X: &SearchAtom{
+									Field:     "ImagePath",
+									Modifiers: []string{"contains"},
+									Patterns: []string{
+										"cscript",
+										"mshta",
+										"powershell",
+										"pwsh",
+										"regsvr32",
+										"rundll32",
+										"wscript",
+									},
+								},
+							},
+							&NamedExpr{
+								Name: "selection_cmd_flags",
+								X: &SearchAtom{
+									Field:     "ImagePath",
+									Modifiers: []string{"contains", "windash"},
+									Patterns: []string{
+										" -c ",
+										" -r ",
+										" -k ",
+									},
+								},
+							},
+							&NamedExpr{
+								Name: "selection_eid",
+								X: &AndExpr{
+									X: []Expr{
+										&SearchAtom{
+											Field:    "Provider_Name",
+											Patterns: []string{"Service Control Manager"},
+										},
+										&SearchAtom{
+											Field:    "EventID",
+											Patterns: []string{"7045"},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+				FalsePositives: []string{
+					"Unknown",
+				},
+				Level: High,
+			},
+		},
 	}
 
 	for _, test := range tests {

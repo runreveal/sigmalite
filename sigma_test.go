@@ -203,6 +203,39 @@ func TestDetectionMatches(t *testing.T) {
 			},
 			want: false,
 		},
+		{
+			filename: "sigma/win_system_susp_service_installation_script.yml",
+			entry: &LogEntry{
+				Fields: map[string]string{
+					"Provider_Name": "Service Control Manager",
+					"EventID":       "7045",
+					"ImagePath":     "powershell -c foo",
+				},
+			},
+			want: true,
+		},
+		{
+			filename: "sigma/win_system_susp_service_installation_script.yml",
+			entry: &LogEntry{
+				Fields: map[string]string{
+					"Provider_Name": "Service Control Manager",
+					"EventID":       "7045",
+					"ImagePath":     "powershell /c foo",
+				},
+			},
+			want: true,
+		},
+		{
+			filename: "sigma/win_system_susp_service_installation_script.yml",
+			entry: &LogEntry{
+				Fields: map[string]string{
+					"Provider_Name": "Service Control Manager",
+					"EventID":       "7045",
+					"ImagePath":     "powershell foo",
+				},
+			},
+			want: false,
+		},
 	}
 
 	for _, test := range tests {
