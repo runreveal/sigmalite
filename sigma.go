@@ -9,6 +9,7 @@ package sigma
 
 import (
 	"fmt"
+	"net/netip"
 	"regexp"
 	"slices"
 	"strings"
@@ -162,7 +163,12 @@ type SearchAtom struct {
 	compiledIsMessage bool
 	compiledModifiers []string
 	compiledPatterns  []string
-	compiled          []*regexp.Regexp
+	compiled          compiledSearchAtom
+}
+
+type compiledSearchAtom struct {
+	regexp []*regexp.Regexp
+	cidr   []netip.Prefix
 }
 
 // Validate returns an error if the search atom won't match
@@ -172,14 +178,25 @@ func (atom *SearchAtom) Validate() error {
 		return fmt.Errorf("no patterns")
 	}
 
-	isRE := false
+	const (
+		globPattern = iota
+		rePattern
+		cidr
+	)
+
+	patternType := globPattern
 	expand := false
 	for i, mod := range atom.Modifiers {
 		switch mod {
 		case "re":
-			isRE = true
-			if len(atom.Modifiers) != 1 {
+			patternType = rePattern
+			if len(atom.Modifiers) != 1 || (len(atom.Modifiers) == 2 && i == 1 && atom.Modifiers[0] == "expand") {
 				return fmt.Errorf("re must be only modifier")
+			}
+		case "cidr":
+			patternType = cidr
+			if len(atom.Modifiers) != 1 || (len(atom.Modifiers) == 2 && i == 1 && atom.Modifiers[0] == "expand") {
+				return fmt.Errorf("cidr must be only modifier")
 			}
 		case "contains", "all", "startswith", "endswith", "windash":
 			// No special handling required.
@@ -197,10 +214,21 @@ func (atom *SearchAtom) Validate() error {
 			return fmt.Errorf("unknown modifier %q", mod)
 		}
 	}
-	if isRE && !expand {
-		for i, pat := range atom.Patterns {
-			if _, err := regexp.Compile(pat); err != nil {
-				return fmt.Errorf("pattern %d: %v", i+1, err)
+
+	// Validate static patterns.
+	if !expand {
+		switch patternType {
+		case rePattern:
+			for i, pat := range atom.Patterns {
+				if _, err := regexp.Compile(pat); err != nil {
+					return fmt.Errorf("pattern %d: %v", i+1, err)
+				}
+			}
+		case cidr:
+			for i, pat := range atom.Patterns {
+				if _, err := netip.ParsePrefix(pat); err != nil {
+					return fmt.Errorf("pattern %d: %v", i+1, err)
+				}
 			}
 		}
 	}
@@ -215,16 +243,7 @@ func (atom *SearchAtom) expandPatterns(placeholders map[string][]string) []strin
 			if !ok {
 				continue
 			}
-			if slices.Contains(atom.Modifiers, "re") {
-				for _, pat := range placeholders[name] {
-					if _, err := regexp.Compile(pat); err != nil {
-						continue
-					}
-					patterns = append(patterns, pat)
-				}
-			} else {
-				patterns = append(patterns, placeholders[name]...)
-			}
+			patterns = append(patterns, placeholders[name]...)
 		}
 		return patterns
 	}
@@ -243,22 +262,45 @@ func (atom *SearchAtom) ExprMatches(entry *LogEntry, opts *MatchOptions) bool {
 	if opts != nil {
 		placeholders = opts.Placeholders
 	}
-	for _, pat := range atom.compile(placeholders) {
+	return atom.compile(placeholders).matches(field)
+}
+
+func (atom compiledSearchAtom) matches(field string) bool {
+	if len(atom.regexp)+len(atom.cidr) == 0 {
+		return false
+	}
+
+	// Regexps are chained by AND.
+	for _, pat := range atom.regexp {
 		if !pat.MatchString(field) {
 			return false
 		}
 	}
-	return true
+
+	if len(atom.cidr) == 0 {
+		return true
+	}
+	// CIDRs are chained by OR.
+	addr, err := netip.ParseAddr(field)
+	if err != nil {
+		return false
+	}
+	for _, prefix := range atom.cidr {
+		if prefix.Contains(addr) {
+			return true
+		}
+	}
+	return false
 }
 
-func (atom *SearchAtom) compile(placeholders map[string][]string) []*regexp.Regexp {
+func (atom *SearchAtom) compile(placeholders map[string][]string) compiledSearchAtom {
 	patterns := atom.expandPatterns(placeholders)
 	if len(patterns) == 0 {
 		// Can happen if the placeholders are invalid.
-		return nil
+		return compiledSearchAtom{}
 	}
 
-	// Common case: we already compiled the regexp.
+	// Common case: we already compiled the atom.
 	atom.mu.RLock()
 	if atom.lockedCompileUpToDate(patterns) {
 		compiled := atom.compiled
@@ -269,23 +311,38 @@ func (atom *SearchAtom) compile(placeholders map[string][]string) []*regexp.Rege
 
 	// Compile a new regular expression
 	// (outside the critical section to reduce contention).
-	sb := new(strings.Builder)
-	var compiled []*regexp.Regexp
-	if slices.Contains(atom.Modifiers, "all") {
-		compiled = make([]*regexp.Regexp, 0, len(patterns))
+	var compiled compiledSearchAtom
+	switch {
+	case slices.Contains(atom.Modifiers, "cidr"):
+		compiled.cidr = make([]netip.Prefix, 0, len(patterns))
+		for _, pat := range patterns {
+			prefix, err := netip.ParsePrefix(pat)
+			if err != nil {
+				continue
+			}
+			compiled.cidr = append(compiled.cidr, prefix)
+		}
+	case slices.Contains(atom.Modifiers, "all"):
+		compiled.regexp = make([]*regexp.Regexp, 0, len(patterns))
+		sb := new(strings.Builder)
 		for _, pat := range patterns {
 			sb.Reset()
-			appendPatternRegexp(sb, pat, atom.Modifiers, atom.isMessage())
-			compiled = append(compiled, regexp.MustCompile(sb.String()))
+			if appendPatternRegexp(sb, pat, atom.Modifiers, atom.isMessage()) {
+				compiled.regexp = append(compiled.regexp, regexp.MustCompile(sb.String()))
+			}
 		}
-	} else {
-		for i, pat := range patterns {
-			if i > 0 {
+	default:
+		sb := new(strings.Builder)
+		first := true
+		for _, pat := range patterns {
+			if !first {
 				sb.WriteString("|")
 			}
-			appendPatternRegexp(sb, pat, atom.Modifiers, atom.isMessage())
+			if appendPatternRegexp(sb, pat, atom.Modifiers, atom.isMessage()) {
+				first = false
+			}
 		}
-		compiled = []*regexp.Regexp{regexp.MustCompile(sb.String())}
+		compiled.regexp = []*regexp.Regexp{regexp.MustCompile(sb.String())}
 	}
 	modifiersCopy := slices.Clone(atom.Modifiers)
 	patternsCopy := slices.Clone(patterns)
@@ -316,12 +373,16 @@ func (atom *SearchAtom) lockedCompileUpToDate(patterns []string) bool {
 // appendPatternRegexp writes a regular expression equivalent to pattern
 // to the given string builder.
 // appendPatternRegexp assumes that the pattern is valid.
-func appendPatternRegexp(sb *strings.Builder, pattern string, modifiers []string, isMessage bool) {
+// appendPatternRegexp reports whether the pattern was valid.
+func appendPatternRegexp(sb *strings.Builder, pattern string, modifiers []string, isMessage bool) bool {
 	if slices.Contains(modifiers, "re") {
+		if _, err := regexp.Compile(pattern); err != nil {
+			return false
+		}
 		sb.WriteString("(?:")
 		sb.WriteString(pattern)
 		sb.WriteString(")")
-		return
+		return true
 	}
 
 	contains := slices.Contains(modifiers, "contains")
@@ -392,6 +453,7 @@ func appendPatternRegexp(sb *strings.Builder, pattern string, modifiers []string
 		sb.WriteString("$")
 	}
 	sb.WriteString(")") // Close non-capturing group.
+	return true
 }
 
 func cutPlaceholder(s string) (_ string, ok bool) {

@@ -285,6 +285,28 @@ func TestDetectionMatches(t *testing.T) {
 			},
 			want: true,
 		},
+		{
+			filename: "sigma/net_connection_lnx_susp_malware_callback_port.yml",
+			entry: &LogEntry{
+				Fields: map[string]string{
+					"Initiated":       "true",
+					"DestinationPort": "2222",
+					"DestinationIp":   "192.0.2.100",
+				},
+			},
+			want: true,
+		},
+		{
+			filename: "sigma/net_connection_lnx_susp_malware_callback_port.yml",
+			entry: &LogEntry{
+				Fields: map[string]string{
+					"Initiated":       "true",
+					"DestinationPort": "2222",
+					"DestinationIp":   "127.0.0.1",
+				},
+			},
+			want: false,
+		},
 	}
 
 	for _, test := range tests {
