@@ -1,0 +1,9 @@
+title: Metadata example
+description: Contains an extra top-level field
+logsource:
+    product: windows
+detection:
+    selection:
+        - 'hello'
+    condition: selection
+extrametadata: foo

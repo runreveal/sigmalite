@@ -47,8 +47,12 @@ type yamlLogSource struct {
 
 // ParseRule parses a single Sigma detection format YAML document.
 func ParseRule(data []byte) (*Rule, error) {
+	docNode := new(yaml.Node)
+	if err := yaml.Unmarshal(data, docNode); err != nil {
+		return nil, fmt.Errorf("parse sigma rule: %v", err)
+	}
 	doc := new(yamlRule)
-	if err := yaml.Unmarshal(data, doc); err != nil {
+	if err := docNode.Decode(doc); err != nil {
 		return nil, fmt.Errorf("parse sigma rule: %v", err)
 	}
 	if doc.Title == "" {
@@ -70,6 +74,8 @@ func ParseRule(data []byte) (*Rule, error) {
 		Detection: new(Detection),
 
 		Fields: doc.Fields,
+
+		Extra: extractExtraFields(docNode),
 	}
 
 	// Technically the Sigma specification makes this required,
@@ -110,6 +116,54 @@ func ParseRule(data []byte) (*Rule, error) {
 	}
 
 	return r, nil
+}
+
+func extractExtraFields(docNode *yaml.Node) map[string]Decoder {
+	if docNode.Kind != yaml.DocumentNode || len(docNode.Content) != 1 {
+		return nil
+	}
+	topNode := docNode.Content[0]
+	if topNode.Kind != yaml.MappingNode {
+		return nil
+	}
+
+	m := make(map[string]Decoder)
+	for i := 0; i < len(topNode.Content); i += 2 {
+		var k string
+		if err := topNode.Content[i].Decode(&k); err != nil {
+			// Shouldn't occur in practice, but we don't really care about this error.
+			continue
+		}
+		if _, known := knownTopLevelKeys[k]; !known {
+			m[k] = topNode.Content[i+1]
+		}
+	}
+	if len(m) == 0 {
+		return nil
+	}
+	return m
+}
+
+// knownTopLevelKeys is the set of top-level keys that are not considered "extra".
+// Adding to this set is technically a breaking change,
+// since applications that aren't aware of the new [Rule] field
+// will no longer receive the key.
+var knownTopLevelKeys = map[string]struct{}{
+	"title":          {},
+	"id":             {},
+	"related":        {},
+	"status":         {},
+	"description":    {},
+	"references":     {},
+	"author":         {},
+	"date":           {},
+	"modified":       {},
+	"tags":           {},
+	"level":          {},
+	"logsource":      {},
+	"detection":      {},
+	"fields":         {},
+	"falsepositives": {},
 }
 
 func parseDetection(block map[string]yaml.Node) (*Detection, error) {

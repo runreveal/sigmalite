@@ -7,11 +7,13 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"gopkg.in/yaml.v3"
 )
 
 func TestParseRule(t *testing.T) {
@@ -714,6 +716,33 @@ func TestParseRule(t *testing.T) {
 				Level:          Low,
 			},
 		},
+		{
+			filename: "extra.yml",
+			want: &Rule{
+				Title:       "Metadata example",
+				Description: "Contains an extra top-level field",
+				LogSource: &LogSource{
+					Product: "windows",
+				},
+				Detection: &Detection{
+					Expr: &NamedExpr{
+						Name: "selection",
+						X: &SearchAtom{
+							Patterns: []string{"hello"},
+						},
+					},
+				},
+				Extra: map[string]Decoder{
+					"extrametadata": &yaml.Node{
+						Kind:   yaml.ScalarNode,
+						Tag:    "!!str",
+						Value:  "foo",
+						Line:   9,
+						Column: 16,
+					},
+				},
+			},
+		},
 	}
 
 	for _, test := range tests {
@@ -727,9 +756,27 @@ func TestParseRule(t *testing.T) {
 				t.Fatal(err)
 			}
 			compareAtoms := cmpopts.IgnoreUnexported(SearchAtom{})
-			if diff := cmp.Diff(test.want, got, compareAtoms); diff != "" {
+
+			// Maintain an explicit allow-list of fields in yaml.Node that we want to compare.
+			// This keeps us from being brittle to upgrades to the yaml package.
+			compareYAMLNodes := cmp.FilterPath(func(p cmp.Path) bool {
+				if p.Index(-2).Type() != yamlNodeType {
+					return false
+				}
+				field := p.Last().(cmp.StructField).Name()
+				return field != "Kind" &&
+					field != "Tag" &&
+					field != "Value" &&
+					field != "Content" &&
+					field != "Line" &&
+					field != "Column"
+			}, cmp.Ignore())
+
+			if diff := cmp.Diff(test.want, got, compareAtoms, compareYAMLNodes); diff != "" {
 				t.Errorf("ParseRule(...) (-want +got):\n%s", diff)
 			}
 		})
 	}
 }
+
+var yamlNodeType = reflect.TypeOf((*yaml.Node)(nil)).Elem()

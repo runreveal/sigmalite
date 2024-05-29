@@ -57,6 +57,19 @@ type Rule struct {
 	Fields []string
 	// FalsePositives is a list of known false positives that may occur.
 	FalsePositives []string
+
+	// Extra is a set of YAML nodes for the unprocessed top-level fields.
+	Extra map[string]Decoder
+}
+
+// Implementation note:
+// The Decoder interface exists so that *yaml.Node is not part of the public interface of this package.
+// Applications can type-assert if they really want,
+// but that will naturally break or permit multiple types as desired.
+
+// A Decoder is a value that can be decoded into a Go value.
+type Decoder interface {
+	Decode(v any) error
 }
 
 // LogSource describes the log data on which a [Detection] is meant to be applied to.
