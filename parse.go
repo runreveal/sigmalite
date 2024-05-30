@@ -45,7 +45,7 @@ type yamlLogSource struct {
 	Definition string `yaml:"definition,omitempty"`
 }
 
-// ParseRule parses a single Sigma detection format YAML document.
+// ParseRule parses a single Sigma YAML document.
 func ParseRule(data []byte) (*Rule, error) {
 	docNode := new(yaml.Node)
 	if err := yaml.Unmarshal(data, docNode); err != nil {

@@ -86,7 +86,7 @@ type LogEntry struct {
 	Fields  map[string]string
 }
 
-// MatchOptions are the parameters to [Detection.Matches] and [Expr.ExprMatches].
+// MatchOptions are the parameters to [Detection.Matches] and [Expr].ExprMatches.
 type MatchOptions struct {
 	Placeholders map[string][]string
 }
@@ -130,7 +130,7 @@ func (x *NotExpr) ExprMatches(entry *LogEntry, opts *MatchOptions) bool {
 	return !x.X.ExprMatches(entry, opts)
 }
 
-// AndExpr is an [Expr] is an expression
+// AndExpr is an [Expr]
 // that evaluates to true if and only if all of its sub-expressions evaluate to true.
 type AndExpr struct {
 	X []Expr
@@ -145,7 +145,7 @@ func (a *AndExpr) ExprMatches(entry *LogEntry, opts *MatchOptions) bool {
 	return true
 }
 
-// OrExpr is an [Expr] is an expression
+// OrExpr is an [Expr]
 // that evaluates to true if at least one of its sub-expressions evaluate to true.
 type OrExpr struct {
 	X []Expr
