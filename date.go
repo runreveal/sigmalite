@@ -29,6 +29,7 @@ func NewDate(year int, month time.Month, day int) Date {
 func ParseDate(s string) (Date, error) {
 	parts := strings.Split(s, "/")
 	if len(parts) != 3 {
+		// The spec says ISO-8601 format is accepted.
 		newParts := strings.Split(s, "-")
 		if len(newParts) != 3 {
 			return Date{}, fmt.Errorf("parse sigma date %q: unknown format", s)
