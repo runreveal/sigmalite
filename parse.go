@@ -5,6 +5,7 @@ package sigma
 
 import (
 	"cmp"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"maps"
@@ -653,4 +654,31 @@ func windashpermute(input string) []string {
 		stringSet[transformed] = struct{}{}
 	}
 	return slices.Collect(maps.Keys(stringSet))
+}
+func base64permute(input string) []string {
+	var permutations []string
+	inputBytes := []byte(input)
+	leftover := len(inputBytes) % 3
+
+	switch leftover {
+	case 0:
+		permutations = append(permutations,
+			base64.RawStdEncoding.EncodeToString(inputBytes),
+			base64.RawStdEncoding.EncodeToString(inputBytes[1:len(inputBytes)-2]),
+			base64.RawStdEncoding.EncodeToString(inputBytes[2:len(inputBytes)-1]),
+		)
+	case 1:
+		permutations = append(permutations,
+			base64.RawStdEncoding.EncodeToString(inputBytes[1:]),
+			base64.RawStdEncoding.EncodeToString(inputBytes[:len(inputBytes)-1]),
+			base64.RawStdEncoding.EncodeToString(inputBytes[2:len(inputBytes)-2]),
+		)
+	case 2:
+		permutations = append(permutations,
+			base64.RawStdEncoding.EncodeToString(inputBytes[2:]),
+			base64.RawStdEncoding.EncodeToString(inputBytes[:len(inputBytes)-2]),
+			base64.RawStdEncoding.EncodeToString(inputBytes[1:len(inputBytes)-1]),
+		)
+	}
+	return permutations
 }

@@ -4,12 +4,14 @@
 package sigma
 
 import (
+	"encoding/base64"
 	"fmt"
 	"os"
 	"path"
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -778,6 +780,29 @@ func TestParseRule(t *testing.T) {
 				t.Errorf("ParseRule(...) (-want +got):\n%s", diff)
 			}
 		})
+	}
+}
+
+func TestBase64Permuter(t *testing.T) {
+	var ogstring = "foobar"
+	for j := 0; j < 3; j++ {
+		var pstring = ogstring
+		perms := base64permute(pstring)
+		for i := 0; i < 20; i++ {
+			pbs := base64.RawStdEncoding.EncodeToString([]byte(pstring))
+			var has bool = false
+			for _, p := range perms {
+				if strings.Contains(pbs, p) {
+					has = true
+					break
+				}
+			}
+			if !has {
+				t.Errorf("Permutation not found: %s", pbs)
+			}
+			pstring = "a" + pstring
+		}
+		ogstring = "a" + ogstring
 	}
 }
 
