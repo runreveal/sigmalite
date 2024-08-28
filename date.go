@@ -29,7 +29,11 @@ func NewDate(year int, month time.Month, day int) Date {
 func ParseDate(s string) (Date, error) {
 	parts := strings.Split(s, "/")
 	if len(parts) != 3 {
-		return Date{}, fmt.Errorf("parse sigma date %q: unknown format", s)
+		newParts := strings.Split(s, "-")
+		if len(newParts) != 3 {
+			return Date{}, fmt.Errorf("parse sigma date %q: unknown format", s)
+		}
+		parts = newParts
 	}
 	year, err := strconv.Atoi(parts[0])
 	if err != nil {

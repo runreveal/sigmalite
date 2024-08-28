@@ -747,6 +747,48 @@ func TestParseRule(t *testing.T) {
 				},
 			},
 		},
+		{
+			filename: "sigma/sysmon_wmi_susp_encoded_scripts.yml",
+			want: &Rule{
+				ID:          "83844185-1c5b-45bc-bcf3-b5bf3084ca5b",
+				Title:       "Suspicious Encoded Scripts in a WMI Consumer",
+				Description: "Detects suspicious encoded payloads in WMI Event Consumers",
+				References: []string{
+					"https://github.com/RiccardoAncarani/LiquidSnake",
+				},
+				Author:   "Florian Roth (Nextron Systems)",
+				Status:   "test",
+				Date:     NewDate(2021, time.September, 01),
+				Modified: NewDate(2022, time.October, 9),
+				LogSource: &LogSource{
+					Category: "wmi_event",
+					Product:  "windows",
+				},
+				Fields:         []string{"User", "Operation"},
+				FalsePositives: []string{"Unknown"},
+				Tags: []string{
+					"attack.execution",
+					"attack.t1047",
+					"attack.persistence",
+					"attack.t1546.003",
+				},
+				Detection: &Detection{
+					Expr: &NamedExpr{
+						Name: "selection_destination",
+						X: &SearchAtom{
+							Field:     "Destination",
+							Modifiers: []string{"base64offset", "contains"},
+							Patterns: []string{
+								`WriteProcessMemory`,
+								`This program cannot be run in DOS mode`,
+								`This program must be run under Win32`,
+							},
+						},
+					},
+				},
+				Level: High,
+			},
+		},
 	}
 
 	for _, test := range tests {
