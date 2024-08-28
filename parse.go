@@ -656,10 +656,18 @@ func windashpermute(input string) []string {
 	return slices.Collect(maps.Keys(stringSet))
 }
 func base64permute(input string) []string {
-	var permutations []string
-	inputBytes := []byte(input)
-	leftover := len(inputBytes) % 3
-
+	// We check for this condition when parsing the rule
+	// and only perform the permutations if the inputs are
+	// long enough. Just return an empty list if the input
+	// is invalid and too short.
+	if len(input) < 5 {
+		return []string{}
+	}
+	var (
+		permutations []string
+		inputBytes   = []byte(input)
+		leftover     = len(inputBytes) % 3
+	)
 	switch leftover {
 	case 0:
 		permutations = append(permutations,

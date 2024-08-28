@@ -212,8 +212,14 @@ func (atom *SearchAtom) Validate() error {
 			if len(atom.Modifiers) != 1 || (len(atom.Modifiers) == 2 && i == 1 && atom.Modifiers[0] == "expand") {
 				return fmt.Errorf("cidr must be only modifier")
 			}
-		case "contains", "all", "startswith", "endswith", "windash", "base64", "base64offset":
+		case "contains", "all", "startswith", "endswith", "windash", "base64":
 			// No special handling required.
+		case "base64offset":
+			for _, pat := range atom.Patterns {
+				if len(pat) < 5 {
+					return fmt.Errorf("base64offset patterns must be at least 3 characters long")
+				}
+			}
 		case "expand":
 			expand = true
 			if i != 0 {
