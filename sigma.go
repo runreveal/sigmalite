@@ -216,7 +216,7 @@ func (atom *SearchAtom) Validate() error {
 			// No special handling required.
 		case "base64offset":
 			for _, pat := range atom.Patterns {
-				if len(pat) < 5 {
+				if len(pat) < 3 {
 					return fmt.Errorf("base64offset patterns must be at least 3 characters long")
 				}
 			}
