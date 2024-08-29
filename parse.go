@@ -4,6 +4,7 @@
 package sigma
 
 import (
+	"bytes"
 	"cmp"
 	"encoding/base64"
 	"errors"
@@ -656,37 +657,22 @@ func windashpermute(input string) []string {
 	return slices.Collect(maps.Keys(stringSet))
 }
 func base64permute(input string) []string {
-	// We check for this condition when parsing the rule
-	// and only perform the permutations if the inputs are
-	// long enough. Just return an empty list if the input
-	// is invalid and too short.
-	if len(input) < 5 {
+	if len(input) == 0 {
 		return []string{}
 	}
-	var (
-		permutations []string
-		inputBytes   = []byte(input)
-		leftover     = len(inputBytes) % 3
-	)
-	switch leftover {
-	case 0:
-		permutations = append(permutations,
-			base64.RawStdEncoding.EncodeToString(inputBytes),
-			base64.RawStdEncoding.EncodeToString(inputBytes[1:len(inputBytes)-2]),
-			base64.RawStdEncoding.EncodeToString(inputBytes[2:len(inputBytes)-1]),
-		)
-	case 1:
-		permutations = append(permutations,
-			base64.RawStdEncoding.EncodeToString(inputBytes[1:]),
-			base64.RawStdEncoding.EncodeToString(inputBytes[:len(inputBytes)-1]),
-			base64.RawStdEncoding.EncodeToString(inputBytes[2:len(inputBytes)-2]),
-		)
-	case 2:
-		permutations = append(permutations,
-			base64.RawStdEncoding.EncodeToString(inputBytes[2:]),
-			base64.RawStdEncoding.EncodeToString(inputBytes[:len(inputBytes)-2]),
-			base64.RawStdEncoding.EncodeToString(inputBytes[1:len(inputBytes)-1]),
-		)
+	permutations := make([]string, 0, 3)
+	inputBytes := []byte(input)
+
+	for i := range 3 {
+		shifted := bytes.Repeat([]byte(" "), i)
+		shifted = append(shifted, inputBytes...)
+		encoded := make([]byte, base64.StdEncoding.EncodedLen(len(shifted)))
+		base64.StdEncoding.Encode(encoded, shifted)
+		startOffset := []int{0, 2, 3}[i]
+		endOffset := []int{0, -3, -2}[(len(inputBytes)+i)%3]
+		encoded = encoded[startOffset : len(encoded)+endOffset]
+		permutations = append(permutations, string(encoded))
 	}
+
 	return permutations
 }
