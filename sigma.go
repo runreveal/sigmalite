@@ -8,6 +8,7 @@
 package sigma
 
 import (
+	"encoding/base64"
 	"fmt"
 	"net/netip"
 	"regexp"
@@ -211,8 +212,14 @@ func (atom *SearchAtom) Validate() error {
 			if len(atom.Modifiers) != 1 || (len(atom.Modifiers) == 2 && i == 1 && atom.Modifiers[0] == "expand") {
 				return fmt.Errorf("cidr must be only modifier")
 			}
-		case "contains", "all", "startswith", "endswith", "windash":
+		case "contains", "all", "startswith", "endswith", "windash", "base64":
 			// No special handling required.
+		case "base64offset":
+			for _, pat := range atom.Patterns {
+				if len(pat) < 3 {
+					return fmt.Errorf("base64offset patterns must be at least 3 characters long")
+				}
+			}
 		case "expand":
 			expand = true
 			if i != 0 {
@@ -398,24 +405,36 @@ func appendPatternRegexp(sb *strings.Builder, pattern string, modifiers []string
 		return true
 	}
 
-	contains := slices.Contains(modifiers, "contains")
+	if slices.Contains(modifiers, "base64offset") {
+		permutes := base64permute(pattern)
+		sb.WriteString("(?:")
+		sb.WriteString(strings.Join(permutes, "|"))
+		sb.WriteString(")")
+		return true
+	}
 
+	contains := slices.Contains(modifiers, "contains")
 	sb.WriteString("(?i:") // Case-insensitive, non-capturing group.
 	if !isMessage && !contains && !slices.Contains(modifiers, "endswith") {
 		sb.WriteString("^")
 	}
 	sb.WriteString("(?:")
 
-	if slices.Contains(modifiers, "windash") {
-		permutations := windashpermute(pattern)
-		for ix, perm := range permutations {
-			escapePattern(sb, perm)
-			if ix != len(permutations)-1 {
-				sb.WriteString("|")
-			}
-		}
+	if slices.Contains(modifiers, "base64") {
+		base64encoded := base64.RawStdEncoding.EncodeToString([]byte(pattern))
+		sb.WriteString(base64encoded)
 	} else {
-		escapePattern(sb, pattern)
+		if slices.Contains(modifiers, "windash") {
+			permutations := windashpermute(pattern)
+			for ix, perm := range permutations {
+				escapePattern(sb, perm)
+				if ix != len(permutations)-1 {
+					sb.WriteString("|")
+				}
+			}
+		} else {
+			escapePattern(sb, pattern)
+		}
 	}
 
 	sb.WriteString(")")
@@ -451,7 +470,6 @@ func escapePattern(sb *strings.Builder, pattern string) {
 			appendQuoteMeta(sb, pattern[i:i+1])
 		}
 	}
-
 }
 
 func cutPlaceholder(s string) (_ string, ok bool) {
