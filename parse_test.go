@@ -4,10 +4,12 @@
 package sigma
 
 import (
+	"fmt"
 	"os"
 	"path"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 
@@ -780,3 +782,50 @@ func TestParseRule(t *testing.T) {
 }
 
 var yamlNodeType = reflect.TypeOf((*yaml.Node)(nil)).Elem()
+
+func TestWindashpermute(t *testing.T) {
+	tests := []struct {
+		pattern  string
+		expected []string
+	}{
+		{
+			pattern: "-test",
+			expected: []string{
+				"-test",
+				"/test",
+				fmt.Sprintf("%stest", EnDash),
+				fmt.Sprintf("%stest", EmDash),
+				fmt.Sprintf("%stest", HorizontalBar),
+			},
+		},
+		{
+			pattern: "/test",
+			expected: []string{
+				"-test",
+				"/test",
+				fmt.Sprintf("%stest", EnDash),
+				fmt.Sprintf("%stest", EmDash),
+				fmt.Sprintf("%stest", HorizontalBar),
+			},
+		},
+		{
+			pattern: "-test-boundaries",
+			expected: []string{
+				"-test-boundaries",
+				"/test-boundaries",
+				fmt.Sprintf("%stest-boundaries", EnDash),
+				fmt.Sprintf("%stest-boundaries", EmDash),
+				fmt.Sprintf("%stest-boundaries", HorizontalBar),
+			},
+		},
+	}
+
+	for _, test := range tests {
+		got := windashpermute(test.pattern)
+		slices.Sort(got)
+		slices.Sort(test.expected)
+		if !slices.Equal(got, test.expected) {
+			t.Errorf("Expected %v, got %v", test.expected, got)
+		}
+	}
+}

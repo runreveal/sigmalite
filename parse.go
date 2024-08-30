@@ -7,6 +7,7 @@ import (
 	"cmp"
 	"errors"
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"strings"
@@ -14,6 +15,12 @@ import (
 
 	"gopkg.in/yaml.v3"
 )
+
+var WinDashMatcher = regexp.MustCompile(`\B[-/]\b`)
+
+const EnDash = "–"
+const EmDash = "—"
+const HorizontalBar = "―"
 
 type yamlRule struct {
 	Title          string               `yaml:"title"`
@@ -635,4 +642,15 @@ func appendQuoteMeta(sb *strings.Builder, s string) {
 
 func isRegexpSpecial(c byte) bool {
 	return strings.IndexByte(`\.+*?()|[]{}^$`, c) != -1
+}
+
+func windashpermute(input string) []string {
+	stringSet := map[string]struct{}{}
+	windowsParamDashes := []string{"-", "/", EnDash, EmDash, HorizontalBar}
+
+	for _, dash := range windowsParamDashes {
+		transformed := WinDashMatcher.ReplaceAllLiteralString(input, dash)
+		stringSet[transformed] = struct{}{}
+	}
+	return slices.Collect(maps.Keys(stringSet))
 }
