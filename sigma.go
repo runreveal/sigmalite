@@ -443,7 +443,6 @@ func appendPatternRegexp(sb *strings.Builder, pattern string, modifiers []string
 	}
 	sb.WriteString(")") // Close non-capturing group.
 	return true
-
 }
 
 func escapePattern(sb *strings.Builder, pattern string) {
