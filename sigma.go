@@ -414,7 +414,6 @@ func appendPatternRegexp(sb *strings.Builder, pattern string, modifiers []string
 	}
 
 	contains := slices.Contains(modifiers, "contains")
-
 	sb.WriteString("(?i:") // Case-insensitive, non-capturing group.
 	if !isMessage && !contains && !slices.Contains(modifiers, "endswith") {
 		sb.WriteString("^")
@@ -425,59 +424,16 @@ func appendPatternRegexp(sb *strings.Builder, pattern string, modifiers []string
 		base64encoded := base64.RawStdEncoding.EncodeToString([]byte(pattern))
 		sb.WriteString(base64encoded)
 	} else {
-		escapePattern(sb, pattern)
-		for i := 0; i < len(pattern); i++ {
-			switch c := pattern[i]; c {
-			case '?':
-				sb.WriteString(".")
-			case '*':
-				sb.WriteString(".*")
-			case '\\':
-				if i+1 >= len(pattern) {
-					sb.WriteString(`\\`)
-					continue
-				}
-				switch pattern[i+1] {
-				case '?', '*', '\\':
-					sb.WriteByte('\\')
-					sb.WriteByte(pattern[i+1])
-					i++
-				default:
-					// "Plain backslash not followed by a wildcard can be expressed as single \".
-					sb.WriteString(`\\`)
-				}
-			default:
-				appendQuoteMeta(sb, pattern[i:i+1])
-			}
-		}
 		if slices.Contains(modifiers, "windash") {
-			sb.WriteString("|")
-			for i := 0; i < len(pattern); i++ {
-				switch c := pattern[i]; c {
-				case '?':
-					sb.WriteString(".")
-				case '*':
-					sb.WriteString(".*")
-				case '-':
-					sb.WriteString("/")
-				case '\\':
-					if i+1 >= len(pattern) {
-						sb.WriteString(`\\`)
-						continue
-					}
-					switch pattern[i+1] {
-					case '?', '*', '\\':
-						sb.WriteByte('\\')
-						sb.WriteByte(pattern[i+1])
-						i++
-					default:
-						// "Plain backslash not followed by a wildcard can be expressed as single \".
-						sb.WriteString(`\\`)
-					}
-				default:
-					appendQuoteMeta(sb, pattern[i:i+1])
+			permutations := windashpermute(pattern)
+			for ix, perm := range permutations {
+				escapePattern(sb, perm)
+				if ix != len(permutations)-1 {
+					sb.WriteString("|")
 				}
 			}
+		} else {
+			escapePattern(sb, pattern)
 		}
 	}
 
@@ -487,6 +443,7 @@ func appendPatternRegexp(sb *strings.Builder, pattern string, modifiers []string
 	}
 	sb.WriteString(")") // Close non-capturing group.
 	return true
+
 }
 
 func escapePattern(sb *strings.Builder, pattern string) {
