@@ -103,6 +103,7 @@ This library supports the following [field modifiers][]:
 - [`re`](https://sigmahq.io/docs/basics/modifiers.html#re)
 - [`startswith`](https://sigmahq.io/docs/basics/modifiers.html#startswith)
 - [`windash`](https://sigmahq.io/docs/basics/modifiers.html#windash)
+- [`base64/base64offset`](https://sigmahq.io/docs/basics/modifiers.html#base64-base64offset)
 
 [field modifiers]: https://sigmahq.io/docs/basics/modifiers.html
 
