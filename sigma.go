@@ -1,11 +1,11 @@
 // Copyright 2024 RunReveal Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-// Package sigma provides a parser and an execution engine
+// Package sigmalite provides a parser and an execution engine
 // for the [Sigma detection format].
 //
 // [Sigma detection format]: https://sigmahq.io/
-package sigma
+package sigmalite
 
 import (
 	"encoding/base64"

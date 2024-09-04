@@ -6,7 +6,7 @@ package sigma_test
 import (
 	"fmt"
 
-	"github.com/runreveal/sigma"
+	sigma "github.com/runreveal/sigmalite"
 )
 
 func Example() {
