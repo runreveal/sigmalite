@@ -1,12 +1,12 @@
 // Copyright 2024 RunReveal Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-package sigma_test
+package sigmalite_test
 
 import (
 	"fmt"
 
-	"github.com/runreveal/sigma"
+	sigma "github.com/runreveal/sigmalite"
 )
 
 func Example() {

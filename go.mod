@@ -1,4 +1,4 @@
-module github.com/runreveal/sigma
+module github.com/runreveal/sigmalite
 
 go 1.23.0
 

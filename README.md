@@ -1,10 +1,10 @@
-# `github.com/runreveal/sigma`
+# `github.com/runreveal/sigmalite`
 
-Package `sigma` provides a parser and an execution engine
+Package `sigmalite` provides a parser and an execution engine
 for the [Sigma detection format][].
 
 ```go
-rule, err := sigma.ParseRule([]byte(`
+rule, err := sigmalite.ParseRule([]byte(`
 title: My example rule
 detection:
   keywords:
@@ -17,7 +17,7 @@ detection:
 if err != nil {
   return err
 }
-entry := &sigma.LogEntry{
+entry := &sigmalite.LogEntry{
   Message: "Hello foo",
   Fields: map[string]string{
     "EventId": "1234",
@@ -31,7 +31,7 @@ isMatch := rule.Detection.Matches(entry, nil)
 ## Install
 
 ```shell
-go get github.com/runreveal/sigma
+go get github.com/runreveal/sigmalite
 ```
 
 ## Rules
