@@ -1,17 +1,12 @@
 title: Condition List Example
-description: A contrived example for testing risk score evaluation.
+description: A contrived example for using a list of conditions.
 logsource:
     product: windows
 detection:
     selection1:
-        EventID: 1
+        - Image|endswith: \\example.exe
     selection2:
-        EventID: 2
-    selection3:
-        EventID: 3
-    filter:
-        Message: ignore
+        - Image|endswith: \\evil.exe
     condition:
         - selection1
         - selection2
-        - selection3 and not filter
