@@ -71,6 +71,12 @@ type Rule struct {
 // This allows scoring alerts without relying solely on the standard rule selection logic.
 // If the rule has risk_score defined, it will use those scores.
 // Otherwise, it will derive a default score from the rule's Level.
+//
+// This implementation:
+// 1. Checks if the entry matches the rule's base condition
+// 2. If it matches, evaluates each risk score expression in the order defined in the YAML
+// 3. Returns the score from the first matching expression
+// 4. Falls back to the default score if no expression specifically matches
 func (r *Rule) EvaluateRiskScore(entry *LogEntry, opts *RiskScoreOptions) RiskScoreResult {
 	if r.Detection == nil {
 		return RiskScoreResult{
@@ -117,7 +123,7 @@ func (r *Rule) EvaluateRiskScore(entry *LogEntry, opts *RiskScoreOptions) RiskSc
 		}
 	}
 
-	// For testing - directly evaluate the detection conditions against the entry
+	// Ensure Detection.Map is initialized
 	if r.Detection.Map == nil {
 		r.Detection.Map = make(map[string]map[string][]string)
 	}
@@ -126,82 +132,44 @@ func (r *Rule) EvaluateRiskScore(entry *LogEntry, opts *RiskScoreOptions) RiskSc
 	baseMatched := false
 	var matchedExpression string
 
-	// Match against the main condition first
+	// Match against the main condition first - if this doesn't match, no scoring is done
 	if r.Detection.Matches(entry, &MatchOptions{}) {
 		baseMatched = true
 	}
 
 	// If the rule has a risk score and there are scoring expressions defined, evaluate them in order
 	if baseMatched && r.RiskScore != nil && len(r.RiskScore.Scores) > 0 {
-		// For AWS CloudTrail Important Change test case, we need to respect the order in the YAML file
-		if r.Title == "AWS CloudTrail Important Change" {
-			// Get selections needed for evaluation
-			selSource := matchesSelection(r.Detection.Map, "selection_source", entry)
-			selEncoded := matchesSelection(r.Detection.Map, "selection_encoded", entry)
-			selYo := matchesSelection(r.Detection.Map, "selected_yo", entry)
-
-			// We need to evaluate expressions in the order they were defined in the YAML file
-			// Per "risk_score" section in the original file:
-			// 1. selection_source AND NOT selection_encoded: 70
-			// 2. selection_source AND selection_encoded: 60
-			// 3. selection_source AND selected_yo: 40
-
-			// First check if selection_source matches since it's part of all expressions
-			if selSource {
-				// Check expressions in order they appear in the YAML
-
-				// First check for "selection_source AND selected_yo" (which should match if yo2=hi)
-				// This includes special case for the test where field "yo2": "hi" should match selected_yo
-				if selYo || entry.Fields["yo2"] == "hi" {
-					return RiskScoreResult{
-						Score:      40,
-						Matched:    true,
-						Expression: "selection_source AND selected_yo",
-					}
-				}
-
-				// Next check "selection_source AND NOT selection_encoded"
-				if !selEncoded {
-					return RiskScoreResult{
-						Score:      70,
-						Matched:    true,
-						Expression: "selection_source AND NOT selection_encoded",
-					}
-				}
-
-				// Then check "selection_source AND selection_encoded"
-				if selEncoded {
-					return RiskScoreResult{
-						Score:      60,
-						Matched:    true,
-						Expression: "selection_source AND selection_encoded",
-					}
-				}
+		// Process expressions in order (preserving insertion order from YAML)
+		// This allows for more specific conditions to be evaluated first
+		for expr, score := range r.RiskScore.Scores {
+			// Parse the expression using the same parser used for main detection conditions
+			parsedExpr, err := ParseCondition(expr)
+			if err != nil {
+				continue
 			}
-		} else {
-			// Generic implementation for any rule
-			// Process expressions in order (preserving insertion order)
-			for expr, score := range r.RiskScore.Scores {
-				// Parse the expression and evaluate it
-				parsedExpr, err := ParseCondition(expr)
-				if err != nil {
-					continue
-				}
 
-				// Create selection map for evaluation if needed
-				if exprMatches(parsedExpr, entry, r.Detection.Map) {
-					return RiskScoreResult{
-						Score:      score,
-						Matched:    true,
-						Expression: expr,
-					}
+			// Check if the expression matches by using the standard exprMatches function
+			// This ensures we're using the same evaluation logic as the main detection
+			if exprMatches(parsedExpr, entry, r.Detection.Map) {
+				return RiskScoreResult{
+					Score:      score,
+					Matched:    true,
+					Expression: expr,
 				}
 			}
 		}
 	}
 
 	// If no scoring expressions matched but base condition did, return default score
+	// Try to identify which selection the entry matched, for better transparency
 	if baseMatched {
+		for selName := range r.Detection.Map {
+			if matchesSelection(r.Detection.Map, selName, entry) {
+				matchedExpression = selName
+				break
+			}
+		}
+		
 		return RiskScoreResult{
 			Score:      opts.DefaultScore,
 			Matched:    true,
@@ -209,7 +177,7 @@ func (r *Rule) EvaluateRiskScore(entry *LogEntry, opts *RiskScoreOptions) RiskSc
 		}
 	}
 
-	// Nothing matched
+	// Nothing matched at all
 	return RiskScoreResult{
 		Score:   opts.DefaultScore,
 		Matched: false,
