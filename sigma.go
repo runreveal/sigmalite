@@ -169,7 +169,7 @@ func (r *Rule) EvaluateRiskScore(entry *LogEntry, opts *RiskScoreOptions) RiskSc
 				break
 			}
 		}
-		
+
 		return RiskScoreResult{
 			Score:      opts.DefaultScore,
 			Matched:    true,
