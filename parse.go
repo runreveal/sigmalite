@@ -730,3 +730,33 @@ func base64permute(input string) []string {
 
 	return permutations
 }
+
+// UnmarshalYAML is a custom unmarshaler for RiskScoreDefinition to handle the
+// scores field as a slice of RiskScoreExpression instead of a map[string]int.
+func (r *RiskScoreDefinition) UnmarshalYAML(value *yaml.Node) error {
+	// Define a temporary struct with the same fields but using map for scores
+	type tempRisk struct {
+		Default int               `yaml:"default"`
+		Scores  map[string]int    `yaml:"scores"`
+	}
+
+	// Unmarshal into our temporary struct
+	var temp tempRisk
+	if err := value.Decode(&temp); err != nil {
+		return err
+	}
+
+	// Copy the default value
+	r.Default = temp.Default
+
+	// Convert the map to a slice of RiskScoreExpression
+	r.Scores = make([]RiskScoreExpression, 0, len(temp.Scores))
+	for expr, score := range temp.Scores {
+		r.Scores = append(r.Scores, RiskScoreExpression{
+			Expression: expr,
+			Score:      score,
+		})
+	}
+
+	return nil
+}

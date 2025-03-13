@@ -45,8 +45,8 @@ func TestRiskScoreParser(t *testing.T) {
 
 			// Print the parsed risk scores for inspection
 			t.Logf("Rule %s has default score: %d", filename, rule.RiskScore.Default)
-			for expr, score := range rule.RiskScore.Scores {
-				t.Logf("  Expression: %s, Score: %d", expr, score)
+			for _, expr := range rule.RiskScore.Scores {
+				t.Logf("  Expression: %s, Score: %d", expr.Expression, expr.Score)
 			}
 		})
 	}

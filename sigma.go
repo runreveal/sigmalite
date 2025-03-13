@@ -112,13 +112,10 @@ func (r *Rule) EvaluateRiskScore(entry *LogEntry, opts *RiskScoreOptions) RiskSc
 				opts.DefaultScore = r.RiskScore.Default
 			}
 
-			// Parse each scoring expression into a condition
+			// Copy scoring expressions preserving order
 			if len(r.RiskScore.Scores) > 0 {
-				opts.RiskExpressions = make(map[string]int)
-				for expr, score := range r.RiskScore.Scores {
-					// Keep original expression as key for scoring
-					opts.RiskExpressions[expr] = score
-				}
+				opts.RiskExpressions = make([]RiskScoreExpression, len(r.RiskScore.Scores))
+				copy(opts.RiskExpressions, r.RiskScore.Scores)
 			}
 		}
 	}
@@ -139,11 +136,11 @@ func (r *Rule) EvaluateRiskScore(entry *LogEntry, opts *RiskScoreOptions) RiskSc
 
 	// If the rule has a risk score and there are scoring expressions defined, evaluate them in order
 	if baseMatched && r.RiskScore != nil && len(r.RiskScore.Scores) > 0 {
-		// Process expressions in order (preserving insertion order from YAML)
+		// Process expressions in order (as defined in the YAML)
 		// This allows for more specific conditions to be evaluated first
-		for expr, score := range r.RiskScore.Scores {
+		for _, riskExpr := range r.RiskScore.Scores {
 			// Parse the expression using the same parser used for main detection conditions
-			parsedExpr, err := ParseCondition(expr)
+			parsedExpr, err := ParseCondition(riskExpr.Expression)
 			if err != nil {
 				continue
 			}
@@ -152,9 +149,9 @@ func (r *Rule) EvaluateRiskScore(entry *LogEntry, opts *RiskScoreOptions) RiskSc
 			// This ensures we're using the same evaluation logic as the main detection
 			if exprMatches(parsedExpr, entry, r.Detection.Map) {
 				return RiskScoreResult{
-					Score:      score,
+					Score:      riskExpr.Score,
 					Matched:    true,
-					Expression: expr,
+					Expression: riskExpr.Expression,
 				}
 			}
 		}
@@ -214,21 +211,32 @@ type MatchOptions struct {
 }
 
 // RiskScoreDefinition defines risk scoring rules in a YAML rule.
-// Each entry in the Scores map represents a condition and its associated score.
+// Each entry in the Scores collection represents a condition and its associated score.
 type RiskScoreDefinition struct {
 	// Default is the default score to use when no scoring conditions match
 	Default int `yaml:"default"`
-	// Scores is a map of condition expressions to their risk score values
+	// Scores is a collection of condition expressions and their associated risk score values.
+	// The order of expressions in this collection is preserved and used during evaluation,
+	// with earlier expressions having higher precedence.
 	// Note: These expressions are stored as strings and not parsed as actual conditions
 	// because they may contain syntax not supported by the standard condition parser
 	// (like uppercase AND/OR operators)
-	Scores map[string]int `yaml:"scores"`
+	Scores []RiskScoreExpression `yaml:"scores,omitempty"`
+}
+
+// RiskScoreExpression represents a single risk score expression and its associated score
+type RiskScoreExpression struct {
+	// Expression is the condition string to evaluate (e.g., "selection_a AND selection_b")
+	Expression string
+	// Score is the risk score value to assign when this expression matches
+	Score int
 }
 
 // RiskScoreOptions are parameters for evaluating risk scores.
 type RiskScoreOptions struct {
-	// RiskExpressions is a map of expression names to risk score values
-	RiskExpressions map[string]int
+	// RiskExpressions is a slice of expressions and their associated risk score values,
+	// evaluated in order (earlier entries have higher precedence)
+	RiskExpressions []RiskScoreExpression
 	// DefaultScore is the score to return when no expressions match
 	DefaultScore int
 	// Placeholders for expression evaluation (same as MatchOptions)
@@ -303,8 +311,13 @@ func evaluateExpr(expr Expr, entry *LogEntry, matchOpts *MatchOptions, scoreOpts
 		if e.ExprMatches(entry, matchOpts) {
 			result.Matched = true
 			result.Expression = e.Name
-			if score, exists := scoreOpts.RiskExpressions[e.Name]; exists {
-				result.Score = score
+			
+			// Find the expression in the RiskExpressions slice
+			for _, riskExpr := range scoreOpts.RiskExpressions {
+				if riskExpr.Expression == e.Name {
+					result.Score = riskExpr.Score
+					break
+				}
 			}
 		}
 

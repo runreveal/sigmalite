@@ -31,11 +31,11 @@ func TestRuleRiskScoreEvaluation(t *testing.T) {
 		},
 		RiskScore: &RiskScoreDefinition{
 			Default: 30,
-			Scores: map[string]int{
-				"selection_basic":                                                30,
-				"selection_basic AND selection_encoded":                          50,
-				"selection_basic AND selection_suspicious":                       70,
-				"selection_basic AND selection_encoded AND selection_suspicious": 90,
+			Scores: []RiskScoreExpression{
+				{Expression: "selection_basic AND selection_encoded AND selection_suspicious", Score: 90},
+				{Expression: "selection_basic AND selection_suspicious", Score: 70},
+				{Expression: "selection_basic AND selection_encoded", Score: 50},
+				{Expression: "selection_basic", Score: 30},
 			},
 		},
 	}
@@ -216,10 +216,10 @@ func TestNetworkRiskScoreEvaluation(t *testing.T) {
 		},
 		RiskScore: &RiskScoreDefinition{
 			Default: 40,
-			Scores: map[string]int{
-				"selection_destination AND selection_port AND selection_process": 90,
-				"selection_destination AND selection_port":                       70,
-				"selection_destination AND selection_process":                    60,
+			Scores: []RiskScoreExpression{
+				{Expression: "selection_destination AND selection_port AND selection_process", Score: 90},
+				{Expression: "selection_destination AND selection_port", Score: 70},
+				{Expression: "selection_destination AND selection_process", Score: 60},
 			},
 		},
 	}
@@ -357,12 +357,12 @@ func TestLinuxRiskScoreEvaluation(t *testing.T) {
 		},
 		RiskScore: &RiskScoreDefinition{
 			Default: 25,
-			Scores: map[string]int{
-				"selection_failures AND selection_rootaccess":       90,
-				"selection_failures AND selection_sensitive_access": 85,
-				"selection_sensitive_access":                        75,
-				"selection_failures":                                60,
-				"selection_rootaccess":                              40,
+			Scores: []RiskScoreExpression{
+				{Expression: "selection_failures AND selection_rootaccess", Score: 90},
+				{Expression: "selection_failures AND selection_sensitive_access", Score: 85},
+				{Expression: "selection_sensitive_access", Score: 75},
+				{Expression: "selection_failures", Score: 60},
+				{Expression: "selection_rootaccess", Score: 40},
 			},
 		},
 	}

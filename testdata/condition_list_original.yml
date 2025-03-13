@@ -1,0 +1,12 @@
+title: Condition List Example
+description: A contrived example for using a list of conditions.
+logsource:
+    product: windows
+detection:
+    selection1:
+        - Image|endswith: \\example.exe
+    selection2:
+        - Image|endswith: \\evil.exe
+    condition:
+        - selection1
+        - selection2
