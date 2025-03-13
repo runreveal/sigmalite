@@ -1,0 +1,41 @@
+title: Network Suspicious Activity with Risk Scoring
+description: Detects suspicious network activity with selective risk scoring
+id: 2024-003
+author: Claude
+level: high
+logsource:
+  product: firewall
+  service: network
+detection:
+  selection_unusual_ports:
+    EventID: 'CONNECTION'
+    DestinationPort:
+      - '4444'
+      - '8888'
+      - '1337'
+  selection_data_transfer:
+    EventID: 'TRANSFER'
+    BytesTransferred: '>1000000'
+    Direction: 'outbound'
+  selection_unusual_protocols:
+    EventID: 'CONNECTION'
+    Protocol: 'ICMP'
+    BytesTransferred: '>1000'
+  selection_unauthorized_ips:
+    EventID: 'CONNECTION'
+    DestinationIP|startswith:
+      - '185.193.'
+      - '91.242.'
+  filter_authorized:
+    SourceHostname: 'admin-workstation'
+  condition: (selection_unusual_ports or selection_data_transfer or selection_unusual_protocols or selection_unauthorized_ips) and not filter_authorized
+risk_score:
+  default: 50
+  scores:
+    selection_unusual_ports: 60
+    selection_data_transfer: 55
+    selection_unusual_protocols: 65
+    selection_unauthorized_ips: 75
+    selection_unauthorized_ips AND selection_unusual_ports: 90
+    selection_data_transfer AND selection_unusual_ports: 85
+    selection_unauthorized_ips AND selection_data_transfer: 95

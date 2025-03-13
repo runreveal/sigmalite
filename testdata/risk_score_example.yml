@@ -1,0 +1,31 @@
+title: Selective Risk Score Example
+description: Demonstrates selective risk scoring feature
+id: 2024-001
+author: Claude
+level: medium
+logsource:
+  product: windows
+  service: security
+detection:
+  selection_basic:
+    EventID: 4688
+    CommandLine|contains: 'powershell'
+  selection_encoded:
+    EventID: 4688
+    CommandLine|contains:
+      - '-encodedcommand'
+      - '-enc'
+  selection_suspicious:
+    EventID: 4688
+    CommandLine|contains:
+      - 'bypass'
+      - 'hidden'
+      - 'downloadstring'
+  condition: selection_basic and (selection_encoded or selection_suspicious)
+risk_score:
+  default: 30
+  scores:
+    selection_basic: 30
+    selection_basic AND selection_encoded: 50
+    selection_basic AND selection_suspicious: 70
+    selection_basic AND selection_encoded AND selection_suspicious: 90

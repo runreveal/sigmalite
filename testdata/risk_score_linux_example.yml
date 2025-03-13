@@ -1,0 +1,36 @@
+title: Linux Suspicious Activity with Risk Scoring
+description: Detects suspicious Linux command activity with selective risk scoring
+id: 2024-002
+author: Claude
+level: medium
+logsource:
+  product: linux
+  service: auth
+detection:
+  selection_sudo:
+    EventID: 'CRED_DISP'
+    CommandLine|contains: 'sudo'
+  selection_rootaccess:
+    EventID: 'USER_START'
+    User: 'root'
+  selection_failures:
+    EventID: 'CRED_FAIL'
+    Count: '>3'
+  selection_sensitive_access:
+    EventID: 'CRED_ACQ'
+    Path|contains:
+      - '/etc/shadow'
+      - '/etc/passwd'
+      - '/.ssh/'
+  filter_expected:
+    SourceUser: 'system'
+  condition: (selection_sudo or selection_rootaccess or selection_failures or selection_sensitive_access) and not filter_expected
+risk_score:
+  default: 25
+  scores:
+    selection_sudo: 30
+    selection_rootaccess: 40
+    selection_failures: 60
+    selection_sensitive_access: 75
+    selection_failures AND selection_sensitive_access: 85
+    selection_failures AND selection_rootaccess: 90
