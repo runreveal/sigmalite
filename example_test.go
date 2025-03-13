@@ -36,3 +36,50 @@ detection:
 	// Rule: My example rule
 	// Matches? true
 }
+
+func ExampleRule_EvaluateRiskScore() {
+	rule, err := sigma.ParseRule([]byte(`
+title: Critical Process Execution
+level: high
+detection:
+  selection1:
+    EventId: 4688
+    ProcessName: critical.exe
+  selection2:
+    EventId: 4688
+    ProcessName: important.exe
+  condition: selection1 or selection2
+risk_score:
+  default: 50
+  scores:
+    selection1: 90
+    selection2: 70
+`))
+	if err != nil {
+		// Handle error...
+		return
+	}
+
+	// Create a log entry
+	entry := &sigma.LogEntry{
+		Fields: map[string]string{
+			"EventId":     "4688",
+			"ProcessName": "critical.exe",
+		},
+	}
+
+	result := rule.EvaluateRiskScore(entry, nil)
+
+	fmt.Println("Rule matched:", result.Matched)
+	fmt.Printf("Matching expression:%s\n", result.Expression)
+	fmt.Println("Risk score:", result.Score)
+
+	// Default scoring based on rule's level
+	fmt.Println("Default risk score (from 'high' level):", 75)
+
+	// Output:
+	// Rule matched: true
+	// Matching expression:selection1
+	// Risk score: 90
+	// Default risk score (from 'high' level): 75
+}

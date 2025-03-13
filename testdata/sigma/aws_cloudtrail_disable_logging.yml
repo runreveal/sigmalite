@@ -20,7 +20,17 @@ detection:
             - StopLogging
             - UpdateTrail
             - DeleteTrail
+    selection_encoded:
+        yo: hiii
+    selected_yo:
+        yo2: hi
     condition: selection_source
+risk_score:
+    default: 50
+    scores:
+        selection_source AND selected_yo: 40
+        selection_source AND selection_encoded: 60
+        selection_source AND NOT selection_encoded: 70
 falsepositives:
     - Valid change in a Trail
 level: medium
