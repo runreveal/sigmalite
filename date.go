@@ -85,12 +85,12 @@ func (d Date) IsZero() bool {
 	return d.year == 0 && d.month == 0 && d.day == 0
 }
 
-// String returns the date in Sigma's YYYY/MM/DD format, like "2006-01-02".
+// String returns the date in Sigma's YYYY/MM/DD format, like "2006/01/02".
 func (d Date) String() string {
 	return fmt.Sprintf("%04d/%02d/%02d", d.Year(), int(d.Month()), d.Day())
 }
 
-// MarshalText formats the date in Sigma's YYYY/MM/DD format, like "2006-01-02".
+// MarshalText formats the date in Sigma's YYYY/MM/DD format, like "2006/01/02".
 func (d Date) MarshalText() ([]byte, error) {
 	return []byte(d.String()), nil
 }
