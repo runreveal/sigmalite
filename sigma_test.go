@@ -7,6 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 )
 
 func TestDetectionMatches(t *testing.T) {
@@ -336,4 +339,52 @@ func TestDetectionMatches(t *testing.T) {
 				test.filename, test.entry, test.options, got, test.want)
 		}
 	}
+}
+
+// FuzzMarshalText ensures that a Sigma rule parsed from a YAML file
+// can be marshaled back into YAML
+// and its interpretation will be identical.
+func FuzzMarshalText(f *testing.F) {
+	filenames := []string{
+		"sigma/aws_cloudtrail_disable_logging.yml",
+		"sigma/aws_cloudtrail_disable_logging_caseinsensitive.yml",
+		"sigma/file_access_win_browser_credential_access.yml",
+		"sigma/lnx_auditd_coinminer.yml",
+		"sigma/lnx_auditd_unix_shell_configuration_modification.yml",
+		"sigma/lnx_buffer_overflows.yml",
+		"sigma/lnx_cron_crontab_file_modification.yml",
+		"sigma/net_connection_lnx_susp_malware_callback_port.yml",
+		"sigma/proxy_ua_susp_base64.yml",
+		"sigma/sysmon_wmi_susp_encoded_scripts.yml",
+		"sigma/whoami.yml",
+		"sigma/win_security_admin_logon.yml",
+		"sigma/win_system_susp_service_installation_script.yml",
+	}
+	for _, filename := range filenames {
+		data, err := os.ReadFile(filepath.Join("testdata", filepath.FromSlash(filename)))
+		if err != nil {
+			f.Error(err)
+			continue
+		}
+		f.Add(data)
+	}
+
+	f.Fuzz(func(t *testing.T, doc []byte) {
+		rule1, err := ParseRule(doc)
+		if err != nil {
+			t.Skip("Fuzz YAML invalid:", err)
+		}
+
+		gotYAML, err := rule1.MarshalText()
+		if err != nil {
+			t.Fatal(err)
+		}
+		rule2, err := ParseRule(gotYAML)
+		if err != nil {
+			t.Fatalf("Failed to parse marshaled YAML: %v\nYAML:\n%s", err, gotYAML)
+		}
+		if diff := cmp.Diff(rule1, rule2, cmpopts.EquateEmpty(), compareAtoms, compareYAMLNodes, ignoreYAMLNodePosition); diff != "" {
+			t.Errorf("-want +got:\n%s", diff)
+		}
+	})
 }

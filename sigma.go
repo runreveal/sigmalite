@@ -10,11 +10,15 @@ package sigmalite
 import (
 	"encoding/base64"
 	"fmt"
+	"iter"
+	"maps"
 	"net/netip"
 	"regexp"
 	"slices"
 	"strings"
 	"sync"
+
+	"gopkg.in/yaml.v3"
 )
 
 // Rule represents a parsed Sigma rule file.
@@ -63,6 +67,197 @@ type Rule struct {
 	Extra map[string]Decoder
 }
 
+// MarshalText encodes the rule in Sigma YAML format.
+func (r *Rule) MarshalText() ([]byte, error) {
+	node, err := r.MarshalYAML()
+	if err != nil {
+		return nil, err
+	}
+	return yaml.Marshal(node)
+}
+
+// MarshalYAML implements the [yaml.Marshaler] interface.
+// No promises are made about the type returned by MarshalYAML;
+// most applications should use [*Rule.MarshalText]
+// to obtain the YAML text.
+func (r *Rule) MarshalYAML() (any, error) {
+	if r.Detection == nil {
+		return nil, fmt.Errorf("marshal sigma rule: no detection")
+	}
+
+	yr := &yamlRule{
+		Title:          r.Title,
+		ID:             r.ID,
+		Status:         r.Status,
+		Description:    r.Description,
+		References:     r.References,
+		Author:         r.Author,
+		Date:           r.Date,
+		Modified:       r.Modified,
+		Tags:           r.Tags,
+		Level:          r.Level,
+		LogSource:      r.LogSource,
+		Detection:      make(map[string]yaml.Node),
+		Fields:         r.Fields,
+		FalsePositives: *stringOrStringSequenceNode(r.FalsePositives),
+	}
+
+	if len(r.Related) > 0 {
+		yr.Related = make([]yamlRelation, 0, len(r.Related))
+		for _, rel := range r.Related {
+			yr.Related = append(yr.Related, yamlRelation(rel))
+		}
+	}
+
+	condition, err := r.Detection.Expr.AppendCondition(nil)
+	if err != nil {
+		return nil, fmt.Errorf("marshal sigma rule: condition: %v", err)
+	}
+	yr.Detection["condition"] = yaml.Node{Kind: yaml.ScalarNode, Value: string(condition)}
+	for name, expr := range namedExpressions(r.Detection.Expr) {
+		if !isValidIdentifier(name) {
+			return nil, fmt.Errorf("marshal sigma rule: detection expression %q: name not allowed", name)
+		}
+		if _, ok := yr.Detection[name]; ok {
+			// Assume that named expressions with the same name are identical.
+			continue
+		}
+
+		exprNode, err := marshalExpression(expr, 0)
+		if err != nil {
+			return nil, fmt.Errorf("marshal sigma rule: detection expression %q: %v", name, err)
+		}
+		yr.Detection[name] = *exprNode
+	}
+
+	if len(r.Extra) > 0 {
+		docNode := new(yaml.Node)
+		if err := docNode.Encode(yr); err != nil {
+			return nil, fmt.Errorf("marshal sigma rule: %v", err)
+		}
+		for _, k := range slices.Sorted(maps.Keys(r.Extra)) {
+			v := r.Extra[k]
+			if _, isKnown := knownTopLevelKeys[k]; isKnown {
+				return nil, fmt.Errorf("marshal sigma rule: extra field %q: invalid key", k)
+			}
+			vNode, _ := v.(*yaml.Node)
+			if vNode == nil {
+				vNode = new(yaml.Node)
+				if err := vNode.Encode(v); err != nil {
+					return nil, fmt.Errorf("marshal sigma rule: extra field %q: %v", k, err)
+				}
+			}
+			docNode.Content = append(docNode.Content, plainScalar(k), vNode)
+		}
+		return docNode, nil
+	}
+
+	return yr, nil
+}
+
+func marshalExpression(x Expr, depth int) (*yaml.Node, error) {
+	switch x := x.(type) {
+	case *SearchAtom:
+		if x.Field == "" && len(x.Modifiers) == 0 {
+			return stringSequenceNode(x.Patterns), nil
+		}
+		m := &yaml.Node{Kind: yaml.MappingNode}
+		appendSearchAtomToMapping(m, x)
+		return m, nil
+	case *AndExpr:
+		m := &yaml.Node{Kind: yaml.MappingNode}
+		for _, x := range x.X {
+			atom, ok := x.(*SearchAtom)
+			if !ok {
+				// Only other atoms can be AND'ed together.
+				// Otherwise it needs to be combined using the condition.
+				return nil, fmt.Errorf("unsupported %T subexpression", x)
+			}
+			appendSearchAtomToMapping(m, atom)
+		}
+		return m, nil
+	case *OrExpr:
+		seq := makeSequenceNode(len(x.X))
+		for _, x := range x.X {
+			newDepth := depth + 1
+			if newDepth >= 1000 {
+				return nil, fmt.Errorf("recursion depth exceeded")
+			}
+			primary, err := marshalExpression(x, depth+1)
+			if err != nil {
+				return nil, err
+			}
+			if primary.Kind == yaml.SequenceNode {
+				// Any sequence is joined by OR, so flatten as we go.
+				seq.Content = append(seq.Content, primary.Content...)
+			} else {
+				seq.Content = append(seq.Content, primary)
+			}
+		}
+		return seq, nil
+	default:
+		return nil, fmt.Errorf("unsupported %T expression", x)
+	}
+}
+
+func appendSearchAtomToMapping(m *yaml.Node, atom *SearchAtom) {
+	key := atom.Field
+	if len(atom.Modifiers) > 0 {
+		n := len(atom.Field)
+		for _, mod := range atom.Modifiers {
+			n += len("|") + len(mod)
+		}
+
+		sb := new(strings.Builder)
+		sb.Grow(n)
+		sb.WriteString(key)
+		for _, mod := range atom.Modifiers {
+			sb.WriteString("|")
+			sb.WriteString(mod)
+		}
+		key = sb.String()
+	}
+
+	m.Content = append(m.Content, plainScalar(key), stringOrStringSequenceNode(atom.Patterns))
+}
+
+func stringOrStringSequenceNode(seq []string) *yaml.Node {
+	if len(seq) == 1 {
+		return quotedScalar(seq[0])
+	}
+	return stringSequenceNode(seq)
+}
+
+func stringSequenceNode(seq []string) *yaml.Node {
+	seqNode := makeSequenceNode(len(seq))
+	for _, s := range seq {
+		seqNode.Content = append(seqNode.Content, quotedScalar(s))
+	}
+	return seqNode
+}
+
+func plainScalar(s string) *yaml.Node {
+	return &yaml.Node{
+		Kind:  yaml.ScalarNode,
+		Value: s,
+	}
+}
+
+func quotedScalar(s string) *yaml.Node {
+	return &yaml.Node{
+		Kind:  yaml.ScalarNode,
+		Style: yaml.DoubleQuotedStyle,
+		Value: s,
+	}
+}
+
+func makeSequenceNode(cap int) *yaml.Node {
+	return &yaml.Node{
+		Kind:    yaml.SequenceNode,
+		Content: make([]*yaml.Node, 0, cap),
+	}
+}
+
 // Implementation note:
 // The Decoder interface exists so that *yaml.Node is not part of the public interface of this package.
 // Applications can type-assert if they really want,
@@ -103,12 +298,14 @@ func (d *Detection) Matches(entry *LogEntry, opts *MatchOptions) bool {
 }
 
 // An Expr is a sub-expression inside of a [Detection].
-//
-// ExprMatches reports whether an entry matches the expression.
-// Implementations of ExprMatches must be safe to call concurrently
+// Methods on Expr must be safe to call concurrently
 // from multiple goroutines.
 type Expr interface {
+	// ExprMatches reports whether an entry matches the expression.
 	ExprMatches(*LogEntry, *MatchOptions) bool
+	// AppendCondition appends the "condition" syntax of this expression
+	// to the given byte slice.
+	AppendCondition(b []byte) ([]byte, error)
 }
 
 // NamedExpr is an [Expr] that has a name.
@@ -122,6 +319,10 @@ func (n *NamedExpr) ExprMatches(entry *LogEntry, opts *MatchOptions) bool {
 	return n.X.ExprMatches(entry, opts)
 }
 
+func (n *NamedExpr) AppendCondition(b []byte) ([]byte, error) {
+	return append(b, n.Name...), nil
+}
+
 // NotExpr is a negated [Expr].
 type NotExpr struct {
 	X Expr
@@ -129,6 +330,17 @@ type NotExpr struct {
 
 func (x *NotExpr) ExprMatches(entry *LogEntry, opts *MatchOptions) bool {
 	return !x.X.ExprMatches(entry, opts)
+}
+
+func (x *NotExpr) AppendCondition(b []byte) ([]byte, error) {
+	b = append(b, "not ("...)
+	var err error
+	b, err = x.X.AppendCondition(b)
+	if err != nil {
+		return b, err
+	}
+	b = append(b, ")"...)
+	return b, nil
 }
 
 // AndExpr is an [Expr]
@@ -146,6 +358,25 @@ func (a *AndExpr) ExprMatches(entry *LogEntry, opts *MatchOptions) bool {
 	return true
 }
 
+func (a *AndExpr) AppendCondition(b []byte) ([]byte, error) {
+	if len(a.X) == 0 {
+		return b, fmt.Errorf("'and' expression missing sub-expressions")
+	}
+	b = append(b, "("...)
+	for i, x := range a.X {
+		if i > 0 {
+			b = append(b, ") and ("...)
+		}
+		var err error
+		b, err = x.AppendCondition(b)
+		if err != nil {
+			return b, err
+		}
+	}
+	b = append(b, ")"...)
+	return b, nil
+}
+
 // OrExpr is an [Expr]
 // that evaluates to true if at least one of its sub-expressions evaluate to true.
 type OrExpr struct {
@@ -159,6 +390,25 @@ func (o *OrExpr) ExprMatches(entry *LogEntry, opts *MatchOptions) bool {
 		}
 	}
 	return false
+}
+
+func (a *OrExpr) AppendCondition(b []byte) ([]byte, error) {
+	if len(a.X) == 0 {
+		return b, fmt.Errorf("'or' expression missing sub-expressions")
+	}
+	b = append(b, "("...)
+	for i, x := range a.X {
+		if i > 0 {
+			b = append(b, ") or ("...)
+		}
+		var err error
+		b, err = x.AppendCondition(b)
+		if err != nil {
+			return b, err
+		}
+	}
+	b = append(b, ")"...)
+	return b, nil
 }
 
 // A SearchAtom is an [Expr] that matches against a single field.
@@ -295,6 +545,10 @@ func (atom *SearchAtom) ExprMatches(entry *LogEntry, opts *MatchOptions) bool {
 		placeholders = opts.Placeholders
 	}
 	return atom.compile(placeholders).matches(field)
+}
+
+func (atom *SearchAtom) AppendCondition(b []byte) ([]byte, error) {
+	return b, fmt.Errorf("marshal condition: search atoms must be wrapped by named expressions")
 }
 
 func (atom compiledSearchAtom) matches(field string) bool {
@@ -595,4 +849,38 @@ func (typ RelationType) IsKnown() bool {
 		typ == Merged ||
 		typ == Renamed ||
 		typ == Similar
+}
+
+func namedExpressions(x Expr) iter.Seq2[string, Expr] {
+	return func(yield func(string, Expr) bool) {
+		visited := make(map[string]struct{})
+		stack := []Expr{x}
+		for len(stack) > 0 {
+			x := stack[len(stack)-1]
+			stack[len(stack)-1] = nil
+			stack = stack[:len(stack)-1]
+
+			switch x := x.(type) {
+			case *NamedExpr:
+				if _, ok := visited[x.Name]; ok {
+					continue
+				}
+
+				visited[x.Name] = struct{}{}
+				if !yield(x.Name, x.X) {
+					return
+				}
+			case *AndExpr:
+				for i := range x.X {
+					stack = append(stack, x.X[len(x.X)-i-1])
+				}
+			case *OrExpr:
+				for i := range x.X {
+					stack = append(stack, x.X[len(x.X)-i-1])
+				}
+			case *NotExpr:
+				stack = append(stack, x.X)
+			}
+		}
+	}
 }
