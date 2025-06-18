@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("title: 0\ndetection:\n    keywords:\n        -\n        - 0:\n    condition: keywords")

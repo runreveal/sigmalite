@@ -801,22 +801,6 @@ func TestParseRule(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			compareAtoms := cmpopts.IgnoreUnexported(SearchAtom{})
-
-			// Maintain an explicit allow-list of fields in yaml.Node that we want to compare.
-			// This keeps us from being brittle to upgrades to the yaml package.
-			compareYAMLNodes := cmp.FilterPath(func(p cmp.Path) bool {
-				if p.Index(-2).Type() != yamlNodeType {
-					return false
-				}
-				field := p.Last().(cmp.StructField).Name()
-				return field != "Kind" &&
-					field != "Tag" &&
-					field != "Value" &&
-					field != "Content" &&
-					field != "Line" &&
-					field != "Column"
-			}, cmp.Ignore())
 
 			if diff := cmp.Diff(test.want, got, compareAtoms, compareYAMLNodes); diff != "" {
 				t.Errorf("ParseRule(...) (-want +got):\n%s", diff)
@@ -824,6 +808,36 @@ func TestParseRule(t *testing.T) {
 		})
 	}
 }
+
+// Package-wide [cmp.Option].
+var (
+	compareAtoms = cmpopts.IgnoreUnexported(SearchAtom{})
+
+	// Maintain an explicit allow-list of fields in yaml.Node that we want to compare.
+	// This keeps us from being brittle to upgrades to the yaml package.
+	compareYAMLNodes = cmp.FilterPath(func(p cmp.Path) bool {
+		if p.Index(-2).Type() != yamlNodeType {
+			return false
+		}
+		field := p.Last().(cmp.StructField).Name()
+		return field != "Kind" &&
+			field != "Tag" &&
+			field != "Value" &&
+			field != "Content" &&
+			field != "Line" &&
+			field != "Column"
+	}, cmp.Ignore())
+
+	ignoreYAMLNodePosition = cmp.FilterPath(func(p cmp.Path) bool {
+		if p.Index(-2).Type() != yamlNodeType {
+			return false
+		}
+		field := p.Last().(cmp.StructField).Name()
+		return field == "Line" || field == "Column"
+	}, cmp.Ignore())
+)
+
+var yamlNodeType = reflect.TypeFor[yaml.Node]()
 
 func TestBase64Permuter(t *testing.T) {
 	var ogstring = "foobar"
@@ -847,8 +861,6 @@ func TestBase64Permuter(t *testing.T) {
 		ogstring = "a" + ogstring
 	}
 }
-
-var yamlNodeType = reflect.TypeOf((*yaml.Node)(nil)).Elem()
 
 func TestWindashpermute(t *testing.T) {
 	tests := []struct {

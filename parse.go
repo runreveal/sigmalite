@@ -56,36 +56,43 @@ type yamlLogSource struct {
 
 // ParseRule parses a single Sigma YAML document.
 func ParseRule(data []byte) (*Rule, error) {
+	r := new(Rule)
+	if err := r.UnmarshalText(data); err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+// UnmarshalText parses a Sigma YAML document.
+func (r *Rule) UnmarshalText(data []byte) error {
 	docNode := new(yaml.Node)
 	if err := yaml.Unmarshal(data, docNode); err != nil {
-		return nil, fmt.Errorf("parse sigma rule: %v", err)
+		return fmt.Errorf("parse sigma rule: %v", err)
 	}
 	doc := new(yamlRule)
 	if err := docNode.Decode(doc); err != nil {
-		return nil, fmt.Errorf("parse sigma rule: %v", err)
+		return fmt.Errorf("parse sigma rule: %v", err)
 	}
 	if doc.Title == "" {
-		return nil, fmt.Errorf("parse sigma rule: missing title")
+		return fmt.Errorf("parse sigma rule: missing title")
 	}
-	r := &Rule{
-		Title:       doc.Title,
-		ID:          doc.ID,
-		Status:      doc.Status,
-		Description: doc.Description,
-		References:  doc.References,
-		Author:      doc.Author,
-		Date:        doc.Date,
-		Modified:    doc.Modified,
-		Tags:        doc.Tags,
-		Level:       doc.Level,
+	r.Title = doc.Title
+	r.ID = doc.ID
+	r.Status = doc.Status
+	r.Description = doc.Description
+	r.References = doc.References
+	r.Author = doc.Author
+	r.Date = doc.Date
+	r.Modified = doc.Modified
+	r.Tags = doc.Tags
+	r.Level = doc.Level
 
-		LogSource: new(LogSource),
-		Detection: new(Detection),
+	r.LogSource = new(LogSource)
+	r.Detection = new(Detection)
 
-		Fields: doc.Fields,
+	r.Fields = doc.Fields
 
-		Extra: extractExtraFields(docNode),
-	}
+	r.Extra = extractExtraFields(docNode)
 
 	// Technically the Sigma specification makes this required,
 	// but leaves all the fields optional.
@@ -98,22 +105,22 @@ func ParseRule(data []byte) (*Rule, error) {
 	}
 
 	if doc.Detection == nil {
-		return nil, fmt.Errorf("parse sigma rule %q: missing detection", r.Title)
+		return fmt.Errorf("parse sigma rule %q: missing detection", r.Title)
 	}
 	var err error
 	r.Detection, err = parseDetection(doc.Detection)
 	if err != nil {
-		return nil, fmt.Errorf("parse sigma rule %q: %v", r.Title, err)
+		return fmt.Errorf("parse sigma rule %q: %v", r.Title, err)
 	}
 
 	if len(doc.Related) > 0 {
 		r.Related = make([]Relation, 0, len(doc.Related))
 		for i, rel := range doc.Related {
 			if rel.ID == "" {
-				return nil, fmt.Errorf("parse sigma rule %q: related[%d]: missing id", r.Title, i)
+				return fmt.Errorf("parse sigma rule %q: related[%d]: missing id", r.Title, i)
 			}
 			if rel.Type == "" {
-				return nil, fmt.Errorf("parse sigma rule %q: related[%d]: missing type", r.Title, i)
+				return fmt.Errorf("parse sigma rule %q: related[%d]: missing type", r.Title, i)
 			}
 			r.Related = append(r.Related, Relation(rel))
 		}
@@ -121,10 +128,10 @@ func ParseRule(data []byte) (*Rule, error) {
 
 	r.FalsePositives, err = listOfStrings(&doc.FalsePositives)
 	if err != nil {
-		return nil, fmt.Errorf("parse sigma rule %q: false positives: %v", r.Title, err)
+		return fmt.Errorf("parse sigma rule %q: false positives: %v", r.Title, err)
 	}
 
-	return r, nil
+	return nil
 }
 
 func extractExtraFields(docNode *yaml.Node) map[string]Decoder {
@@ -193,6 +200,9 @@ func parseDetection(block map[string]yaml.Node) (*Detection, error) {
 	for id, x := range block {
 		if id == "condition" {
 			continue
+		}
+		if !isValidIdentifier(id) {
+			return nil, fmt.Errorf("invalid search identifier %q", id)
 		}
 
 		var result Expr
@@ -460,20 +470,21 @@ var (
 	errAggregate = errors.New("aggregation expressions not supported")
 )
 
+const conditionDelims = "()|"
+
 // lex returns the next token in the condition
 // or the empty string on EOF.
 func (p *conditionParser) lex() string {
 	p.s = strings.TrimLeftFunc(p.s, unicode.IsSpace)
 	var end int
-	const delims = "()|"
 	switch {
 	case p.s == "":
 		return ""
-	case strings.IndexByte("()|", p.s[0]) != -1:
+	case strings.IndexByte(conditionDelims, p.s[0]) != -1:
 		end = 1
 	default:
 		end = strings.IndexFunc(p.s, func(c rune) bool {
-			return strings.ContainsRune(delims, c) || unicode.IsSpace(c)
+			return strings.ContainsRune(conditionDelims, c) || unicode.IsSpace(c)
 		})
 		if end == -1 {
 			end = len(p.s)
@@ -482,6 +493,15 @@ func (p *conditionParser) lex() string {
 	tok := p.s[:end]
 	p.s = p.s[end:]
 	return tok
+}
+
+func isValidIdentifier(s string) bool {
+	return len(s) > 0 &&
+		s != "condition" &&
+		s != "timeframe" &&
+		!strings.ContainsFunc(s, func(r rune) bool {
+			return strings.ContainsRune(conditionDelims, r) || unicode.IsSpace(r)
+		})
 }
 
 func parseSearchMap(node *yaml.Node) (Expr, error) {
