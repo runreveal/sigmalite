@@ -337,3 +337,364 @@ func TestDetectionMatches(t *testing.T) {
 		}
 	}
 }
+
+// MockFieldResolver is a test implementation of FieldResolver
+type MockFieldResolver struct {
+	// Mappings defines field name patterns to their resolved values
+	Mappings map[string][]string
+}
+
+func (m *MockFieldResolver) Resolve(fieldName string, entry *LogEntry) []string {
+	if values, ok := m.Mappings[fieldName]; ok {
+		return values
+	}
+	return nil
+}
+
+func TestFieldResolver(t *testing.T) {
+	tests := []struct {
+		name     string
+		atom     *SearchAtom
+		entry    *LogEntry
+		resolver *MockFieldResolver
+		want     bool
+	}{
+		{
+			name: "resolver returns single matching value",
+			atom: &SearchAtom{
+				Field:    "custom.field.path",
+				Patterns: []string{"expected_value"},
+			},
+			entry: &LogEntry{
+				Fields: map[string]string{
+					"other_field": "irrelevant",
+				},
+			},
+			resolver: &MockFieldResolver{
+				Mappings: map[string][]string{
+					"custom.field.path": {"expected_value"},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "resolver returns multiple values, one matches",
+			atom: &SearchAtom{
+				Field:    "array.field",
+				Patterns: []string{"target_value"},
+			},
+			entry: &LogEntry{
+				Fields: map[string]string{},
+			},
+			resolver: &MockFieldResolver{
+				Mappings: map[string][]string{
+					"array.field": {"wrong_value", "target_value", "another_value"},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "resolver returns multiple values, none match",
+			atom: &SearchAtom{
+				Field:    "array.field",
+				Patterns: []string{"target_value"},
+			},
+			entry: &LogEntry{
+				Fields: map[string]string{},
+			},
+			resolver: &MockFieldResolver{
+				Mappings: map[string][]string{
+					"array.field": {"wrong_value", "another_wrong_value"},
+				},
+			},
+			want: false,
+		},
+		{
+			name: "resolver returns no values for field",
+			atom: &SearchAtom{
+				Field:    "missing.field",
+				Patterns: []string{"any_value"},
+			},
+			entry: &LogEntry{
+				Fields: map[string]string{},
+			},
+			resolver: &MockFieldResolver{
+				Mappings: map[string][]string{},
+			},
+			want: false,
+		},
+		{
+			name: "resolver returns empty slice",
+			atom: &SearchAtom{
+				Field:    "empty.field",
+				Patterns: []string{"any_value"},
+			},
+			entry: &LogEntry{
+				Fields: map[string]string{},
+			},
+			resolver: &MockFieldResolver{
+				Mappings: map[string][]string{
+					"empty.field": {},
+				},
+			},
+			want: false,
+		},
+		{
+			name: "resolver with wildcard-like pattern",
+			atom: &SearchAtom{
+				Field:    "field1.*.field2",
+				Patterns: []string{"matched_value"},
+			},
+			entry: &LogEntry{
+				Fields: map[string]string{
+					"field1.abc.field2": "wrong_value", // This would normally match in basic lookup
+				},
+			},
+			resolver: &MockFieldResolver{
+				Mappings: map[string][]string{
+					"field1.*.field2": {"matched_value", "other_value"},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "resolver with contains modifier",
+			atom: &SearchAtom{
+				Field:     "complex.path",
+				Modifiers: []string{"contains"},
+				Patterns:  []string{"admin"},
+			},
+			entry: &LogEntry{
+				Fields: map[string]string{},
+			},
+			resolver: &MockFieldResolver{
+				Mappings: map[string][]string{
+					"complex.path": {"user_administrator", "regular_user"},
+				},
+			},
+			want: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			opts := &MatchOptions{
+				FieldResolver: test.resolver,
+			}
+			got := test.atom.ExprMatches(test.entry, opts)
+			if got != test.want {
+				t.Errorf("SearchAtom.ExprMatches() with resolver = %t; want %t", got, test.want)
+			}
+		})
+	}
+}
+
+func TestFieldResolverBackwardCompatibility(t *testing.T) {
+	// Test that when no resolver is provided, it falls back to standard field lookup
+	atom := &SearchAtom{
+		Field:    "standard.field",
+		Patterns: []string{"test_value"},
+	}
+
+	entry := &LogEntry{
+		Fields: map[string]string{
+			"standard.field": "test_value",
+			"other.field":    "other_value",
+		},
+	}
+
+	// Without resolver - should use standard lookup
+	opts1 := &MatchOptions{}
+	got1 := atom.ExprMatches(entry, opts1)
+	if !got1 {
+		t.Error("Expected standard field lookup to work when no resolver provided")
+	}
+
+	// With nil resolver - should use standard lookup
+	opts2 := &MatchOptions{FieldResolver: nil}
+	got2 := atom.ExprMatches(entry, opts2)
+	if !got2 {
+		t.Error("Expected standard field lookup to work when resolver is nil")
+	}
+
+	// Verify case-insensitive fallback still works
+	atomCaseInsensitive := &SearchAtom{
+		Field:    "STANDARD.FIELD",
+		Patterns: []string{"test_value"},
+	}
+	got3 := atomCaseInsensitive.ExprMatches(entry, opts1)
+	if !got3 {
+		t.Error("Expected case-insensitive lookup to work without resolver")
+	}
+}
+
+func TestFieldResolverEdgeCases(t *testing.T) {
+	tests := []struct {
+		name     string
+		atom     *SearchAtom
+		entry    *LogEntry
+		resolver *MockFieldResolver
+		want     bool
+	}{
+		{
+			name: "resolver returns nil (not empty slice)",
+			atom: &SearchAtom{
+				Field:    "missing.field",
+				Patterns: []string{"any_value"},
+			},
+			entry: &LogEntry{
+				Fields: map[string]string{},
+			},
+			resolver: &MockFieldResolver{
+				Mappings: map[string][]string{}, // Will return nil for missing field
+			},
+			want: false,
+		},
+		{
+			name: "resolver with complex field path",
+			atom: &SearchAtom{
+				Field:    "deep.nested.array[*].field",
+				Patterns: []string{"target"},
+			},
+			entry: &LogEntry{
+				Fields: map[string]string{
+					"irrelevant": "data",
+				},
+			},
+			resolver: &MockFieldResolver{
+				Mappings: map[string][]string{
+					"deep.nested.array[*].field": {"value1", "target", "value3"},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "resolver with regex modifier",
+			atom: &SearchAtom{
+				Field:     "pattern.field",
+				Modifiers: []string{"re"},
+				Patterns:  []string{"^test.*end$"},
+			},
+			entry: &LogEntry{
+				Fields: map[string]string{},
+			},
+			resolver: &MockFieldResolver{
+				Mappings: map[string][]string{
+					"pattern.field": {"test_middle_end", "no_match", "another_test_end"},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "resolver with startswith modifier on multiple values",
+			atom: &SearchAtom{
+				Field:     "prefix.field",
+				Modifiers: []string{"startswith"},
+				Patterns:  []string{"admin"},
+			},
+			entry: &LogEntry{
+				Fields: map[string]string{},
+			},
+			resolver: &MockFieldResolver{
+				Mappings: map[string][]string{
+					"prefix.field": {"user_normal", "administrator", "admin_user"},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "resolver with all+contains modifier requires all patterns to match",
+			atom: &SearchAtom{
+				Field:     "all.field",
+				Modifiers: []string{"all", "contains"},
+				Patterns:  []string{"test", "admin"},
+			},
+			entry: &LogEntry{
+				Fields: map[string]string{},
+			},
+			resolver: &MockFieldResolver{
+				Mappings: map[string][]string{
+					"all.field": {"test_admin_user"}, // Contains both "test" and "admin"
+				},
+			},
+			want: true,
+		},
+		{
+			name: "resolver with all+contains modifier fails when one pattern missing",
+			atom: &SearchAtom{
+				Field:     "all.field",
+				Modifiers: []string{"all", "contains"},
+				Patterns:  []string{"test", "admin"},
+			},
+			entry: &LogEntry{
+				Fields: map[string]string{},
+			},
+			resolver: &MockFieldResolver{
+				Mappings: map[string][]string{
+					"all.field": {"test_user"}, // Missing "admin"
+				},
+			},
+			want: false,
+		},
+		{
+			name: "message field should ignore resolver",
+			atom: &SearchAtom{
+				Field:    "", // Empty field means message
+				Patterns: []string{"hello"},
+			},
+			entry: &LogEntry{
+				Message: "hello world",
+				Fields:  map[string]string{},
+			},
+			resolver: &MockFieldResolver{
+				Mappings: map[string][]string{
+					"": {"should_not_be_called"},
+				},
+			},
+			want: true, // Should match message, not call resolver
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			opts := &MatchOptions{
+				FieldResolver: test.resolver,
+			}
+			got := test.atom.ExprMatches(test.entry, opts)
+			if got != test.want {
+				t.Errorf("SearchAtom.ExprMatches() = %t; want %t", got, test.want)
+			}
+		})
+	}
+}
+
+func TestFieldResolverWithPlaceholders(t *testing.T) {
+	// Test that resolvers work correctly with placeholder expansion
+	atom := &SearchAtom{
+		Field:     "dynamic.field",
+		Modifiers: []string{"expand"},
+		Patterns:  []string{"%test_placeholder%"},
+	}
+
+	entry := &LogEntry{
+		Fields: map[string]string{},
+	}
+
+	resolver := &MockFieldResolver{
+		Mappings: map[string][]string{
+			"dynamic.field": {"expanded_value", "other_value"},
+		},
+	}
+
+	opts := &MatchOptions{
+		FieldResolver: resolver,
+		Placeholders: map[string][]string{
+			"test_placeholder": {"expanded_value"},
+		},
+	}
+
+	got := atom.ExprMatches(entry, opts)
+	if !got {
+		t.Error("Expected resolver to work with placeholder expansion")
+	}
+}

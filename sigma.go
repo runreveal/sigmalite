@@ -81,6 +81,14 @@ type LogSource struct {
 	Definition string
 }
 
+// FieldResolver allows custom field lookup logic.
+// The Resolve method takes a field name and returns all matching values.
+// This enables complex field resolution including wildcards, arrays, nested objects, etc.
+// If no matches are found, it should return nil or an empty slice.
+type FieldResolver interface {
+	Resolve(fieldName string, entry *LogEntry) []string
+}
+
 // LogEntry represents an entry that a [Rule] can match on.
 type LogEntry struct {
 	Message string
@@ -90,6 +98,9 @@ type LogEntry struct {
 // MatchOptions are the parameters to [Detection.Matches] and [Expr].ExprMatches.
 type MatchOptions struct {
 	Placeholders map[string][]string
+	// FieldResolver provides optional custom field lookup logic.
+	// If nil, standard field lookup is used (exact match, then case-insensitive).
+	FieldResolver FieldResolver
 }
 
 // Detection describes the pattern that a [Rule] is matching on.
@@ -274,27 +285,46 @@ func (atom *SearchAtom) ExprMatches(entry *LogEntry, opts *MatchOptions) bool {
 	if err := atom.Validate(); err != nil {
 		return false
 	}
-	field := entry.Message
-	if atom.Field != "" {
-		// Try an exact match first for efficiency
-		if v, ok := entry.Fields[atom.Field]; ok {
-			field = v
-		} else {
-			// If no exact match, try case insensitive
-			wantField := strings.ToLower(atom.Field)
-			for k, v := range entry.Fields {
-				if strings.ToLower(k) == wantField {
-					field = v
-					break
-				}
-			}
-		}
-	}
+
 	var placeholders map[string][]string
 	if opts != nil {
 		placeholders = opts.Placeholders
 	}
-	return atom.compile(placeholders).matches(field)
+	compiled := atom.compile(placeholders)
+
+	// If no field specified, match against message
+	if atom.Field == "" {
+		return compiled.matches(entry.Message)
+	}
+
+	// Use custom field resolver if available
+	if opts != nil && opts.FieldResolver != nil {
+		values := opts.FieldResolver.Resolve(atom.Field, entry)
+		// If any resolved value matches the pattern, return true
+		for _, value := range values {
+			if compiled.matches(value) {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Fallback to standard field lookup for backward compatibility
+	// Try an exact match first for efficiency
+	if v, ok := entry.Fields[atom.Field]; ok {
+		return compiled.matches(v)
+	}
+
+	// If no exact match, try case insensitive
+	wantField := strings.ToLower(atom.Field)
+	for k, v := range entry.Fields {
+		if strings.ToLower(k) == wantField {
+			return compiled.matches(v)
+		}
+	}
+
+	// No matching field found
+	return false
 }
 
 func (atom compiledSearchAtom) matches(field string) bool {
