@@ -73,14 +73,14 @@ title: My example rule with IP addresses
 detection:
   local:
     DestinationIp|cidr:
-      - '127.0.0.0/8'
-      - '10.0.0.0/8'
-      - '172.16.0.0/12'
-      - '192.168.0.0/16'
-      - '169.254.0.0/16'
-      - '::1/128'         # IPv6 loopback
-      - 'fe80::/10'       # IPv6 link-local addresses
-      - 'fc00::/7'        # IPv6 private addresses
+      - "127.0.0.0/8"
+      - "10.0.0.0/8"
+      - "172.16.0.0/12"
+      - "192.168.0.0/16"
+      - "169.254.0.0/16"
+      - "::1/128" # IPv6 loopback
+      - "fe80::/10" # IPv6 link-local addresses
+      - "fc00::/7" # IPv6 private addresses
   condition: not local
 ```
 
@@ -106,6 +106,85 @@ This library supports the following [field modifiers][]:
 - [`base64/base64offset`](https://sigmahq.io/docs/basics/modifiers.html#base64-base64offset)
 
 [field modifiers]: https://sigmahq.io/docs/basics/modifiers.html
+
+### Field Resolver
+
+The `FieldResolver` interface extends the standard Sigma specification to support complex field lookup scenarios that go beyond simple key/value pairs. This allows you to implement custom field resolution logic for:
+
+- **Nested JSON structures**: Access deeply nested fields using dot notation (e.g., `event.process.user`)
+- **Array handling**: Extract values from arrays or lists within log entries
+- **Wildcard matching**: Support field patterns like `process.*.user` or `network[*].ip`
+- **Multiple field aggregation**: Combine values from multiple related fields
+- **Case normalization**: Handle field name variations and case sensitivity
+- **Complex data transformations**: Apply custom logic before field matching
+- **External datasource lookups**: Lookup field values from an external datasource.
+
+#### Interface Definition
+
+```go
+type FieldResolver interface {
+    Resolve(fieldName string, entry *LogEntry) []string
+}
+```
+
+The `Resolve` method takes a field name from your Sigma rule and returns all matching values as a string slice. If no matches are found, return `nil` or an empty slice.
+
+#### Basic Usage Example
+
+```go
+// CustomResolver demonstrates field resolution for structured logs
+type CustomResolver struct{}
+
+func (r *CustomResolver) Resolve(fieldName string, entry *sigma.LogEntry) []string {
+    switch fieldName {
+    case "process.users":
+        // Aggregate user fields from multiple sources
+        var users []string
+        if user, ok := entry.Fields["Event.Process.User"]; ok {
+            users = append(users, user)
+        }
+        if user, ok := entry.Fields["Event.Login.User"]; ok {
+            users = append(users, user)
+        }
+        if user, ok := entry.Fields["Event.Session.User"]; ok {
+            users = append(users, user)
+        }
+        return users
+
+    case "network.internal_ips":
+        // Extract all IP addresses from network-related fields
+        var ips []string
+        for fieldName, value := range entry.Fields {
+            if strings.Contains(strings.ToLower(fieldName), "ip") {
+                // Simple IP validation (in real usage, use proper validation)
+                if strings.Contains(value, ".") {
+                    ips = append(ips, value)
+                }
+            }
+        }
+        return ips
+
+    default:
+        return nil
+    }
+}
+
+func matches(detection *sigmalite.Detection) bool {
+  opts := &sigmalite.MatchOptions{
+		FieldResolver: CustomResolver{},
+  },
+
+  entry := &sigmalite.LogEntry{
+		Message: string("Message Text"),
+		Fields:  nil, // Using resolver so this can be empty
+	}
+
+	return detection.Matches(entry, opts)
+}
+
+```
+
+Field Resolvers work seamlessly with all [field modifiers](#field-modifiers), allowing you to apply regex patterns, case-insensitive matching, and other transformations to the resolved values.
 
 ## License
 
