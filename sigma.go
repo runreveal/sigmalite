@@ -95,12 +95,19 @@ type LogEntry struct {
 	Fields  map[string]string
 }
 
+// MatchResult contains the result of evaluating a detection.
+type MatchResult struct {
+	Matched     bool
+	Explanation string
+}
+
 // MatchOptions are the parameters to [Detection.Matches] and [Expr].ExprMatches.
 type MatchOptions struct {
 	Placeholders map[string][]string
 	// FieldResolver provides optional custom field lookup logic.
 	// If nil, standard field lookup is used (exact match, then case-insensitive).
-	FieldResolver FieldResolver
+	FieldResolver     FieldResolver
+	EnableExplanation bool
 }
 
 // Detection describes the pattern that a [Rule] is matching on.
@@ -108,9 +115,18 @@ type Detection struct {
 	Expr Expr
 }
 
-// Matches reports whether the entry matches the detection's expression.
-func (d *Detection) Matches(entry *LogEntry, opts *MatchOptions) bool {
-	return d.Expr.ExprMatches(entry, opts)
+func (d *Detection) Matches(entry *LogEntry, opts *MatchOptions) MatchResult {
+	if opts == nil || !opts.EnableExplanation {
+		matched := d.Expr.ExprMatches(entry, opts)
+		return MatchResult{Matched: matched}
+	}
+
+	ctx := newExplanationContext()
+	matched := d.Expr.explainMatches(entry, opts, ctx)
+	return MatchResult{
+		Matched:     matched,
+		Explanation: ctx.Format(),
+	}
 }
 
 // An Expr is a sub-expression inside of a [Detection].
@@ -120,6 +136,7 @@ func (d *Detection) Matches(entry *LogEntry, opts *MatchOptions) bool {
 // from multiple goroutines.
 type Expr interface {
 	ExprMatches(*LogEntry, *MatchOptions) bool
+	explainMatches(*LogEntry, *MatchOptions, *explanationContext) bool
 }
 
 // NamedExpr is an [Expr] that has a name.
@@ -133,6 +150,16 @@ func (n *NamedExpr) ExprMatches(entry *LogEntry, opts *MatchOptions) bool {
 	return n.X.ExprMatches(entry, opts)
 }
 
+func (n *NamedExpr) explainMatches(entry *LogEntry, opts *MatchOptions, ctx *explanationContext) bool {
+	node := &traceNode{Type: "named", Name: n.Name}
+	ctx.push(node)
+	defer ctx.pop()
+
+	matched := n.X.explainMatches(entry, opts, ctx)
+	node.Matched = matched
+	return matched
+}
+
 // NotExpr is a negated [Expr].
 type NotExpr struct {
 	X Expr
@@ -140,6 +167,17 @@ type NotExpr struct {
 
 func (x *NotExpr) ExprMatches(entry *LogEntry, opts *MatchOptions) bool {
 	return !x.X.ExprMatches(entry, opts)
+}
+
+func (x *NotExpr) explainMatches(entry *LogEntry, opts *MatchOptions, ctx *explanationContext) bool {
+	node := &traceNode{Type: "not"}
+	ctx.push(node)
+	defer ctx.pop()
+
+	matched := x.X.explainMatches(entry, opts, ctx)
+	node.Matched = !matched
+	node.Reason = fmt.Sprintf("negated: %v → %v", matched, !matched)
+	return !matched
 }
 
 // AndExpr is an [Expr]
@@ -157,6 +195,26 @@ func (a *AndExpr) ExprMatches(entry *LogEntry, opts *MatchOptions) bool {
 	return true
 }
 
+func (a *AndExpr) explainMatches(entry *LogEntry, opts *MatchOptions, ctx *explanationContext) bool {
+	node := &traceNode{Type: "and"}
+	ctx.push(node)
+	defer ctx.pop()
+
+	allMatched := true
+	for i, x := range a.X {
+		matched := x.explainMatches(entry, opts, ctx)
+		if !matched {
+			allMatched = false
+			if node.Reason == "" {
+				node.Reason = fmt.Sprintf("child %d failed", i)
+			}
+		}
+	}
+
+	node.Matched = allMatched
+	return allMatched
+}
+
 // OrExpr is an [Expr]
 // that evaluates to true if at least one of its sub-expressions evaluate to true.
 type OrExpr struct {
@@ -170,6 +228,26 @@ func (o *OrExpr) ExprMatches(entry *LogEntry, opts *MatchOptions) bool {
 		}
 	}
 	return false
+}
+
+func (o *OrExpr) explainMatches(entry *LogEntry, opts *MatchOptions, ctx *explanationContext) bool {
+	node := &traceNode{Type: "or"}
+	ctx.push(node)
+	defer ctx.pop()
+
+	anyMatched := false
+	for i, x := range o.X {
+		matched := x.explainMatches(entry, opts, ctx)
+		if matched {
+			anyMatched = true
+			if node.Reason == "" {
+				node.Reason = fmt.Sprintf("child %d succeeded", i)
+			}
+		}
+	}
+
+	node.Matched = anyMatched
+	return anyMatched
 }
 
 // A SearchAtom is an [Expr] that matches against a single field.
@@ -324,6 +402,93 @@ func (atom *SearchAtom) ExprMatches(entry *LogEntry, opts *MatchOptions) bool {
 	}
 
 	// No matching field found
+	return false
+}
+
+func (atom *SearchAtom) explainMatches(entry *LogEntry, opts *MatchOptions, ctx *explanationContext) bool {
+	node := &traceNode{
+		Type:    "atom",
+		Field:   atom.Field,
+		Pattern: atom.Patterns,
+	}
+	ctx.push(node)
+	defer ctx.pop()
+
+	if err := atom.Validate(); err != nil {
+		node.Matched = false
+		node.Reason = fmt.Sprintf("validation failed: %v", err)
+		return false
+	}
+
+	var placeholders map[string][]string
+	if opts != nil {
+		placeholders = opts.Placeholders
+	}
+	compiled := atom.compile(placeholders)
+
+	if atom.Field == "" {
+		node.FieldValue = entry.Message
+		matched := compiled.matches(entry.Message)
+		node.Matched = matched
+		if matched {
+			node.Reason = "message matched pattern"
+		} else {
+			node.Reason = "message did not match pattern"
+		}
+		return matched
+	}
+
+	if opts != nil && opts.FieldResolver != nil {
+		values := opts.FieldResolver.Resolve(atom.Field, entry)
+		if len(values) == 0 {
+			node.Matched = false
+			node.Reason = "field resolver returned no values"
+			return false
+		}
+
+		for i, value := range values {
+			if compiled.matches(value) {
+				node.Matched = true
+				node.FieldValue = value
+				node.Reason = fmt.Sprintf("resolver value %d matched", i)
+				return true
+			}
+		}
+		node.Matched = false
+		node.FieldValue = fmt.Sprintf("%d values checked", len(values))
+		node.Reason = "none of the resolver values matched"
+		return false
+	}
+
+	if v, ok := entry.Fields[atom.Field]; ok {
+		node.FieldValue = v
+		matched := compiled.matches(v)
+		node.Matched = matched
+		if matched {
+			node.Reason = "field value matched (exact)"
+		} else {
+			node.Reason = "field value did not match"
+		}
+		return matched
+	}
+
+	wantField := strings.ToLower(atom.Field)
+	for k, v := range entry.Fields {
+		if strings.ToLower(k) == wantField {
+			node.FieldValue = v
+			matched := compiled.matches(v)
+			node.Matched = matched
+			if matched {
+				node.Reason = fmt.Sprintf("field value matched (case-insensitive: %s)", k)
+			} else {
+				node.Reason = "field value did not match"
+			}
+			return matched
+		}
+	}
+
+	node.Matched = false
+	node.Reason = "field not found"
 	return false
 }
 

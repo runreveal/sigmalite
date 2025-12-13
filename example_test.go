@@ -29,7 +29,7 @@ detection:
 			"EventId": "1234",
 		},
 	}
-	isMatch := rule.Detection.Matches(entry, nil)
+	isMatch := rule.Detection.Matches(entry, nil).Matched
 	fmt.Println("Rule:", rule.Title)
 	fmt.Println("Matches?", isMatch)
 	// Output:
@@ -105,12 +105,37 @@ detection:
 	}
 
 	fmt.Println("Rule:", rule.Title)
-	fmt.Println("Entry 1 matches?", rule.Detection.Matches(entry1, opts))
-	fmt.Println("Entry 2 matches?", rule.Detection.Matches(entry2, opts))
-	fmt.Println("Entry 3 matches?", rule.Detection.Matches(entry3, opts))
+	fmt.Println("Entry 1 matches?", rule.Detection.Matches(entry1, opts).Matched)
+	fmt.Println("Entry 2 matches?", rule.Detection.Matches(entry2, opts).Matched)
+	fmt.Println("Entry 3 matches?", rule.Detection.Matches(entry3, opts).Matched)
 	// Output:
 	// Rule: Field Resolver Example
 	// Entry 1 matches? true
 	// Entry 2 matches? true
 	// Entry 3 matches? false
+}
+
+func Example_explain() {
+	rule, _ := sigma.ParseRule([]byte(`
+title: Admin Login Detection
+detection:
+  selection:
+    EventId: "4624"
+    User: "admin"
+  condition: selection
+`))
+
+	entry := &sigma.LogEntry{
+		Fields: map[string]string{
+			"EventId": "4624",
+			"User":    "guest",
+		},
+	}
+
+	opts := &sigma.MatchOptions{EnableExplanation: true}
+	result := rule.Detection.Matches(entry, opts)
+
+	fmt.Printf("Matched: %v\n", result.Matched)
+	fmt.Println("Explanation:")
+	fmt.Println(result.Explanation)
 }

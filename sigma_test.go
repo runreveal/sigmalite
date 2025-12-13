@@ -330,7 +330,7 @@ func TestDetectionMatches(t *testing.T) {
 			t.Errorf("%s: %v", test.filename, err)
 			continue
 		}
-		got := rule.Detection.Matches(test.entry, test.options)
+		got := rule.Detection.Matches(test.entry, test.options).Matched
 		if got != test.want {
 			t.Errorf("ParseRule(%q).Detection.Matches(%+v, %+v) = %t; want %t",
 				test.filename, test.entry, test.options, got, test.want)
