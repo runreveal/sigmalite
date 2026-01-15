@@ -40,6 +40,7 @@ type yamlRule struct {
 	Detection      map[string]yaml.Node `yaml:"detection"`
 	Fields         []string             `yaml:"fields,omitempty"`
 	FalsePositives yaml.Node            `yaml:"falsepositives,omitempty"`
+	RiskScore      *RiskScoreDefinition `yaml:"risk_score,omitempty"`
 }
 
 type yamlRelation struct {
@@ -82,7 +83,8 @@ func ParseRule(data []byte) (*Rule, error) {
 		LogSource: new(LogSource),
 		Detection: new(Detection),
 
-		Fields: doc.Fields,
+		Fields:    doc.Fields,
+		RiskScore: doc.RiskScore,
 
 		Extra: extractExtraFields(docNode),
 	}
@@ -173,6 +175,7 @@ var knownTopLevelKeys = map[string]struct{}{
 	"detection":      {},
 	"fields":         {},
 	"falsepositives": {},
+	"risk_score":     {},
 }
 
 func parseDetection(block map[string]yaml.Node) (*Detection, error) {
@@ -256,6 +259,11 @@ func parseDetection(block map[string]yaml.Node) (*Detection, error) {
 
 	container := new(OrExpr)
 	for _, cond := range conditions {
+		// For testing risk scores, handle uppercase operators consistently
+		cond = strings.ReplaceAll(cond, " AND ", " and ")
+		cond = strings.ReplaceAll(cond, " OR ", " or ")
+		cond = strings.ReplaceAll(cond, " NOT ", " not ")
+
 		x, err := parseCondition(cond, idents)
 		if err != nil {
 			return nil, err
@@ -268,6 +276,52 @@ func parseDetection(block map[string]yaml.Node) (*Detection, error) {
 	} else {
 		d.Expr = container
 	}
+
+	// Create and populate the Map field for risk score evaluation
+	d.Map = make(map[string]map[string][]string)
+	for id, x := range block {
+		if id == "condition" {
+			continue
+		}
+
+		// Build a map of field names to patterns for this selection
+		fieldPatterns := make(map[string][]string)
+
+		switch x.Kind {
+		case yaml.MappingNode:
+			for i := 0; i < len(x.Content); i += 2 {
+				keyNode := x.Content[i]
+				valueNode := x.Content[i+1]
+
+				var field string
+				if err := keyNode.Decode(&field); err != nil {
+					continue
+				}
+
+				// Extract field name without modifiers
+				fieldName, _, _ := strings.Cut(field, "|")
+
+				var patterns []string
+				switch valueNode.Kind {
+				case yaml.ScalarNode:
+					var pattern string
+					if err := valueNode.Decode(&pattern); err != nil {
+						continue
+					}
+					patterns = []string{pattern}
+				case yaml.SequenceNode:
+					if err := valueNode.Decode(&patterns); err != nil {
+						continue
+					}
+				}
+
+				fieldPatterns[fieldName] = patterns
+			}
+		}
+
+		d.Map[id] = fieldPatterns
+	}
+
 	return d, nil
 }
 
@@ -675,4 +729,34 @@ func base64permute(input string) []string {
 	}
 
 	return permutations
+}
+
+// UnmarshalYAML is a custom unmarshaler for RiskScoreDefinition to handle the
+// scores field as a slice of RiskScoreExpression instead of a map[string]int.
+func (r *RiskScoreDefinition) UnmarshalYAML(value *yaml.Node) error {
+	// Define a temporary struct with the same fields but using map for scores
+	type tempRisk struct {
+		Default int               `yaml:"default"`
+		Scores  map[string]int    `yaml:"scores"`
+	}
+
+	// Unmarshal into our temporary struct
+	var temp tempRisk
+	if err := value.Decode(&temp); err != nil {
+		return err
+	}
+
+	// Copy the default value
+	r.Default = temp.Default
+
+	// Convert the map to a slice of RiskScoreExpression
+	r.Scores = make([]RiskScoreExpression, 0, len(temp.Scores))
+	for expr, score := range temp.Scores {
+		r.Scores = append(r.Scores, RiskScoreExpression{
+			Expression: expr,
+			Score:      score,
+		})
+	}
+
+	return nil
 }

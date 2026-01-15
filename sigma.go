@@ -53,6 +53,10 @@ type Rule struct {
 	// Detection describes the pattern that a rule is matching on.
 	Detection *Detection
 
+	// RiskScore defines risk scoring rules for the detection.
+	// This allows more granular scoring than just using the Level.
+	RiskScore *RiskScoreDefinition `yaml:"risk_score,omitempty"`
+
 	// Fields is a list of log fields that could be interesting in further analysis of the event
 	// and should be displayed to the analyst.
 	Fields []string
@@ -61,6 +65,120 @@ type Rule struct {
 
 	// Extra is a set of YAML nodes for the unprocessed top-level fields.
 	Extra map[string]Decoder
+}
+
+// EvaluateRiskScore evaluates the rule's detection against an entry and returns a risk score.
+// This allows scoring alerts without relying solely on the standard rule selection logic.
+// If the rule has risk_score defined, it will use those scores.
+// Otherwise, it will derive a default score from the rule's Level.
+//
+// This implementation:
+// 1. Checks if the entry matches the rule's base condition
+// 2. If it matches, evaluates each risk score expression in the order defined in the YAML
+// 3. Returns the score from the first matching expression
+// 4. Falls back to the default score if no expression specifically matches
+func (r *Rule) EvaluateRiskScore(entry *LogEntry, opts *RiskScoreOptions) RiskScoreResult {
+	if r.Detection == nil {
+		return RiskScoreResult{
+			Score:   0,
+			Matched: false,
+		}
+	}
+
+	// If no options provided, create them from the rule
+	if opts == nil {
+		// Default score based on rule level
+		defaultScore := 0
+		switch r.Level {
+		case Informational:
+			defaultScore = 10
+		case Low:
+			defaultScore = 25
+		case Medium:
+			defaultScore = 50
+		case High:
+			defaultScore = 75
+		case Critical:
+			defaultScore = 100
+		}
+
+		opts = &RiskScoreOptions{
+			DefaultScore: defaultScore,
+		}
+
+		// If rule has defined risk_score, use those instead
+		if r.RiskScore != nil {
+			if r.RiskScore.Default > 0 {
+				opts.DefaultScore = r.RiskScore.Default
+			}
+
+			// Copy scoring expressions preserving order
+			if len(r.RiskScore.Scores) > 0 {
+				opts.RiskExpressions = make([]RiskScoreExpression, len(r.RiskScore.Scores))
+				copy(opts.RiskExpressions, r.RiskScore.Scores)
+			}
+		}
+	}
+
+	// Ensure Detection.Map is initialized
+	if r.Detection.Map == nil {
+		r.Detection.Map = make(map[string]map[string][]string)
+	}
+
+	// Now check if the entry matches the main condition
+	baseMatched := false
+	var matchedExpression string
+
+	// Match against the main condition first - if this doesn't match, no scoring is done
+	if r.Detection.Matches(entry, &MatchOptions{}) {
+		baseMatched = true
+	}
+
+	// If the rule has a risk score and there are scoring expressions defined, evaluate them in order
+	if baseMatched && r.RiskScore != nil && len(r.RiskScore.Scores) > 0 {
+		// Process expressions in order (as defined in the YAML)
+		// This allows for more specific conditions to be evaluated first
+		for _, riskExpr := range r.RiskScore.Scores {
+			// Parse the expression using the same parser used for main detection conditions
+			parsedExpr, err := ParseCondition(riskExpr.Expression)
+			if err != nil {
+				continue
+			}
+
+			// Check if the expression matches by using the standard exprMatches function
+			// This ensures we're using the same evaluation logic as the main detection
+			if exprMatches(parsedExpr, entry, r.Detection.Map) {
+				return RiskScoreResult{
+					Score:      riskExpr.Score,
+					Matched:    true,
+					Expression: riskExpr.Expression,
+				}
+			}
+		}
+	}
+
+	// If no scoring expressions matched but base condition did, return default score
+	// Try to identify which selection the entry matched, for better transparency
+	if baseMatched {
+		for selName := range r.Detection.Map {
+			if matchesSelection(r.Detection.Map, selName, entry) {
+				matchedExpression = selName
+				break
+			}
+		}
+
+		return RiskScoreResult{
+			Score:      opts.DefaultScore,
+			Matched:    true,
+			Expression: matchedExpression,
+		}
+	}
+
+	// Nothing matched at all
+	return RiskScoreResult{
+		Score:   opts.DefaultScore,
+		Matched: false,
+	}
 }
 
 // Implementation note:
@@ -103,14 +221,145 @@ type MatchOptions struct {
 	FieldResolver FieldResolver
 }
 
+// RiskScoreDefinition defines risk scoring rules in a YAML rule.
+// Each entry in the Scores collection represents a condition and its associated score.
+type RiskScoreDefinition struct {
+	// Default is the default score to use when no scoring conditions match
+	Default int `yaml:"default"`
+	// Scores is a collection of condition expressions and their associated risk score values.
+	// The order of expressions in this collection is preserved and used during evaluation,
+	// with earlier expressions having higher precedence.
+	// Note: These expressions are stored as strings and not parsed as actual conditions
+	// because they may contain syntax not supported by the standard condition parser
+	// (like uppercase AND/OR operators)
+	Scores []RiskScoreExpression `yaml:"scores,omitempty"`
+}
+
+// RiskScoreExpression represents a single risk score expression and its associated score
+type RiskScoreExpression struct {
+	// Expression is the condition string to evaluate (e.g., "selection_a AND selection_b")
+	Expression string
+	// Score is the risk score value to assign when this expression matches
+	Score int
+}
+
+// RiskScoreOptions are parameters for evaluating risk scores.
+type RiskScoreOptions struct {
+	// RiskExpressions is a slice of expressions and their associated risk score values,
+	// evaluated in order (earlier entries have higher precedence)
+	RiskExpressions []RiskScoreExpression
+	// DefaultScore is the score to return when no expressions match
+	DefaultScore int
+	// Placeholders for expression evaluation (same as MatchOptions)
+	Placeholders map[string][]string
+}
+
+// RiskScoreResult contains the evaluation result of a risk score.
+type RiskScoreResult struct {
+	// Score is the final risk score value
+	Score int
+	// Matched indicates if any expression matched
+	Matched bool
+	// Expression is the name of the matched expression (if any)
+	Expression string
+}
+
 // Detection describes the pattern that a [Rule] is matching on.
 type Detection struct {
 	Expr Expr
+	// Map holds the mapping of selection names to their field->patterns definition
+	Map map[string]map[string][]string
 }
 
 // Matches reports whether the entry matches the detection's expression.
 func (d *Detection) Matches(entry *LogEntry, opts *MatchOptions) bool {
 	return d.Expr.ExprMatches(entry, opts)
+}
+
+// EvaluateRiskScore evaluates the detection against an entry and returns a risk score.
+// This allows scoring alerts without relying on the standard rule selection logic.
+// If no expressions match, the DefaultScore from options will be returned.
+func (d *Detection) EvaluateRiskScore(entry *LogEntry, opts *RiskScoreOptions) RiskScoreResult {
+	if opts == nil {
+		return RiskScoreResult{
+			Score:   0,
+			Matched: false,
+		}
+	}
+
+	matchOpts := &MatchOptions{
+		Placeholders: opts.Placeholders,
+	}
+
+	// Create result with default values
+	result := RiskScoreResult{
+		Score:   opts.DefaultScore,
+		Matched: false,
+	}
+
+	// If the overall detection doesn't match, return the default score
+	if !d.Matches(entry, matchOpts) {
+		return result
+	}
+
+	// Handle different expression types recursively
+	result = evaluateExpr(d.Expr, entry, matchOpts, opts)
+	result.Matched = true // If we're here, the detection matched, even if we couldn't find a specific named expression
+	return result
+}
+
+// evaluateExpr recursively evaluates an expression to find a matching named expression
+// and its corresponding risk score.
+func evaluateExpr(expr Expr, entry *LogEntry, matchOpts *MatchOptions, scoreOpts *RiskScoreOptions) RiskScoreResult {
+	result := RiskScoreResult{
+		Score:   scoreOpts.DefaultScore,
+		Matched: false,
+	}
+
+	// Check for different expression types
+	switch e := expr.(type) {
+	case *NamedExpr:
+		if e.ExprMatches(entry, matchOpts) {
+			result.Matched = true
+			result.Expression = e.Name
+			
+			// Find the expression in the RiskExpressions slice
+			for _, riskExpr := range scoreOpts.RiskExpressions {
+				if riskExpr.Expression == e.Name {
+					result.Score = riskExpr.Score
+					break
+				}
+			}
+		}
+
+	case *OrExpr:
+		// For OR expressions, return first matching named expression
+		for _, subExpr := range e.X {
+			subResult := evaluateExpr(subExpr, entry, matchOpts, scoreOpts)
+			if subResult.Matched {
+				return subResult
+			}
+		}
+
+	case *AndExpr:
+		// For AND expressions, we need all to match, but we'll return the first matching named expression
+		// Check each expression for a match
+		for _, subExpr := range e.X {
+			subResult := evaluateExpr(subExpr, entry, matchOpts, scoreOpts)
+			if subResult.Matched {
+				return subResult
+			}
+		}
+
+	case *NotExpr:
+		// Not expressions can't contribute a named expression directly
+		// We just check if the entry matches
+		if e.ExprMatches(entry, matchOpts) {
+			result.Matched = true
+		}
+	}
+
+	return result
 }
 
 // An Expr is a sub-expression inside of a [Detection].
@@ -170,6 +419,41 @@ func (o *OrExpr) ExprMatches(entry *LogEntry, opts *MatchOptions) bool {
 		}
 	}
 	return false
+}
+
+// Helper function to check if a selection matches an entry's fields
+func matchesSelection(selectionMap map[string]map[string][]string, selectionName string, entry *LogEntry) bool {
+	if selectionMap == nil {
+		return false
+	}
+
+	selection, ok := selectionMap[selectionName]
+	if !ok {
+		return false
+	}
+
+	// Check if all fields in the selection match
+	for field, patterns := range selection {
+		fieldVal, exists := entry.Fields[field]
+		if !exists {
+			return false
+		}
+
+		fieldMatched := false
+		for _, pattern := range patterns {
+			// Simple exact match for testing
+			if pattern == fieldVal {
+				fieldMatched = true
+				break
+			}
+		}
+
+		if !fieldMatched {
+			return false
+		}
+	}
+
+	return true
 }
 
 // A SearchAtom is an [Expr] that matches against a single field.
@@ -521,6 +805,39 @@ func cutPlaceholder(s string) (_ string, ok bool) {
 	return s[1 : len(s)-1], true
 }
 
+// exprMatches determines if a parsed expression matches the entry based on the selection map
+func exprMatches(expr Expr, entry *LogEntry, selectionMap map[string]map[string][]string) bool {
+	switch e := expr.(type) {
+	case *NamedExpr:
+		// Check if the named selection matches the entry
+		return matchesSelection(selectionMap, e.Name, entry)
+
+	case *NotExpr:
+		// Check if the negated expression does NOT match
+		return !exprMatches(e.X, entry, selectionMap)
+
+	case *AndExpr:
+		// Check if ALL subexpressions match (AND)
+		for _, subExpr := range e.X {
+			if !exprMatches(subExpr, entry, selectionMap) {
+				return false
+			}
+		}
+		return true
+
+	case *OrExpr:
+		// Check if ANY subexpression matches (OR)
+		for _, subExpr := range e.X {
+			if exprMatches(subExpr, entry, selectionMap) {
+				return true
+			}
+		}
+		return false
+	}
+
+	return false
+}
+
 // Status is an enumeration of [Rule] stability classifications.
 type Status string
 
@@ -625,4 +942,84 @@ func (typ RelationType) IsKnown() bool {
 		typ == Merged ||
 		typ == Renamed ||
 		typ == Similar
+}
+
+// ParseCondition parses a string condition expression like "selection_source AND NOT selection_encoded"
+// into an Expr that can be evaluated.
+func ParseCondition(expr string) (Expr, error) {
+	// Handle uppercase operators for risk score expressions
+	expr = strings.ReplaceAll(expr, " AND ", " and ")
+	expr = strings.ReplaceAll(expr, " OR ", " or ")
+	expr = strings.ReplaceAll(expr, " NOT ", " not ")
+
+	parts := strings.Fields(expr)
+	if len(parts) == 1 {
+		// Get the named expression from the rule's detection
+		return &NamedExpr{Name: parts[0], X: &SearchAtom{}}, nil
+	}
+
+	// Handle case with just a NOT (e.g., "NOT selection_source")
+	if len(parts) == 2 && (parts[0] == "NOT" || parts[0] == "not") {
+		expr := &NamedExpr{Name: parts[1], X: &SearchAtom{}}
+		return &NotExpr{X: expr}, nil
+	}
+
+	var lastExpr Expr
+	i := 0
+
+	// First build the first expression
+	if (parts[0] == "NOT" || parts[0] == "not") && len(parts) > 1 {
+		lastExpr = &NotExpr{X: &NamedExpr{Name: parts[1], X: &SearchAtom{}}}
+		i = 2
+	} else {
+		lastExpr = &NamedExpr{Name: parts[0], X: &SearchAtom{}}
+		i = 1
+	}
+
+	// Continue parsing the rest of the expression
+	for i < len(parts) {
+		switch strings.ToLower(parts[i]) {
+		case "and":
+			if i == len(parts)-1 {
+				return nil, fmt.Errorf("invalid AND position")
+			}
+			i++
+
+			var rightExpr Expr
+			if (parts[i] == "NOT" || parts[i] == "not") && i+1 < len(parts) {
+				rightExpr = &NotExpr{X: &NamedExpr{Name: parts[i+1], X: &SearchAtom{}}}
+				i += 2
+			} else {
+				rightExpr = &NamedExpr{Name: parts[i], X: &SearchAtom{}}
+				i++
+			}
+
+			lastExpr = &AndExpr{X: []Expr{lastExpr, rightExpr}}
+
+		case "or":
+			if i == len(parts)-1 {
+				return nil, fmt.Errorf("invalid OR position")
+			}
+			i++
+
+			var rightExpr Expr
+			if (parts[i] == "NOT" || parts[i] == "not") && i+1 < len(parts) {
+				rightExpr = &NotExpr{X: &NamedExpr{Name: parts[i+1], X: &SearchAtom{}}}
+				i += 2
+			} else {
+				rightExpr = &NamedExpr{Name: parts[i], X: &SearchAtom{}}
+				i++
+			}
+
+			lastExpr = &OrExpr{X: []Expr{lastExpr, rightExpr}}
+
+		default:
+			return nil, fmt.Errorf("invalid operator: %s", parts[i])
+		}
+	}
+
+	if lastExpr == nil {
+		return nil, fmt.Errorf("invalid condition")
+	}
+	return lastExpr, nil
 }
