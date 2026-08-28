@@ -20,6 +20,10 @@ import (
 
 var WinDashMatcher = regexp.MustCompile(`\B[-/]\b`)
 
+// nullTag is the resolved YAML short tag for null scalars
+// ("null", "~", and empty values).
+const nullTag = "!!null"
+
 const EnDash = "–"
 const EmDash = "—"
 const HorizontalBar = "―"
@@ -511,14 +515,33 @@ func parseSearchMap(node *yaml.Node) (Expr, error) {
 		// TODO(maybe): Handle integers differently?
 		switch valueNode.Kind {
 		case yaml.ScalarNode:
-			var v string
-			if err := valueNode.Decode(&v); err != nil {
-				return nil, fmt.Errorf("%s: %v", k, err)
+			if valueNode.ShortTag() == nullTag {
+				// "field: null" (also "~" and a bare "field:") matches when
+				// the field is absent — distinct from "field: ''", which
+				// requires the field to be present and empty.
+				atom.IsNull = true
+			} else {
+				var v string
+				if err := valueNode.Decode(&v); err != nil {
+					return nil, fmt.Errorf("%s: %v", k, err)
+				}
+				atom.Patterns = []string{v}
 			}
-			atom.Patterns = []string{v}
 		case yaml.SequenceNode:
-			if err := valueNode.Decode(&atom.Patterns); err != nil {
-				return nil, fmt.Errorf("%s: %v", k, err)
+			for _, item := range valueNode.Content {
+				if item.Kind == yaml.ScalarNode && item.ShortTag() == nullTag {
+					// A null alternative in a list: "field: [null, 'x']"
+					// matches when the field is absent OR equals 'x'.
+					// (Previously the null was silently dropped by the
+					// []string decode.)
+					atom.IsNull = true
+					continue
+				}
+				var v string
+				if err := item.Decode(&v); err != nil {
+					return nil, fmt.Errorf("%s: %v", k, err)
+				}
+				atom.Patterns = append(atom.Patterns, v)
 			}
 		default:
 			return nil, fmt.Errorf("%s: unsupported value", k)

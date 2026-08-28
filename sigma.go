@@ -183,6 +183,14 @@ type SearchAtom struct {
 	// Patterns is the set of patterns to check against the field.
 	// If one of them matches, then the field matches this atom.
 	Patterns []string
+	// IsNull reports that the rule wrote this atom's value as a YAML null
+	// ("field: null"), which matches when the field is absent from the
+	// entry. It is distinct from "field: ''", which requires the field to
+	// be present and hold the empty string; the Sigma specification treats
+	// null as its own type that shares no type with any other value.
+	// When a null appears inside a value list ("field: [null, 'x']"),
+	// IsNull is set and the remaining alternatives stay in Patterns.
+	IsNull bool
 
 	mu                sync.RWMutex
 	compiledIsMessage bool
@@ -200,6 +208,11 @@ type compiledSearchAtom struct {
 // because the modifiers or patterns are invalid.
 func (atom *SearchAtom) Validate() error {
 	if len(atom.Patterns) == 0 {
+		if atom.IsNull {
+			// A pure null atom ("field: null") has no patterns to compile;
+			// it matches on field absence alone.
+			return nil
+		}
 		return fmt.Errorf("no patterns")
 	}
 
@@ -300,6 +313,10 @@ func (atom *SearchAtom) ExprMatches(entry *LogEntry, opts *MatchOptions) bool {
 	// Use custom field resolver if available
 	if opts != nil && opts.FieldResolver != nil {
 		values := opts.FieldResolver.Resolve(atom.Field, entry)
+		if len(values) == 0 {
+			// The resolver found no such field: only a null atom matches.
+			return atom.IsNull
+		}
 		// If any resolved value matches the pattern, return true
 		for _, value := range values {
 			if compiled.matches(value) {
@@ -323,8 +340,9 @@ func (atom *SearchAtom) ExprMatches(entry *LogEntry, opts *MatchOptions) bool {
 		}
 	}
 
-	// No matching field found
-	return false
+	// No matching field found: only a null atom ("field: null") matches an
+	// absent field.
+	return atom.IsNull
 }
 
 func (atom compiledSearchAtom) matches(field string) bool {
